@@ -1,0 +1,102 @@
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import api from '../../api/axios';
+import dayjs from 'dayjs';
+
+export default function MyReservation() {
+  const [params] = useSearchParams();
+  const [phone, setPhone]           = useState(params.get('phone') || '');
+  const [reservations, setReservations] = useState([]);
+  const [searched, setSearched]     = useState(false);
+  const [loading, setLoading]       = useState(false);
+
+  // 예약 후 자동 조회
+  useEffect(() => {
+    if (params.get('phone')) handleSearch(params.get('phone'));
+  }, []);
+
+  const handleSearch = async (p) => {
+    const q = p || phone;
+    if (!q.trim()) return alert('전화번호를 입력하세요');
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/reservations?phone=${q}`);
+      setReservations(data);
+      setSearched(true);
+    } catch {
+      alert('조회 실패');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancel = async (id) => {
+    if (!window.confirm('예약을 취소하시겠습니까?')) return;
+    try {
+      await api.patch(`/reservations/${id}/cancel`);
+      alert('취소되었습니다');
+      handleSearch();
+    } catch (e) {
+      alert(e.response?.data?.error || '취소 실패');
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-bold text-gray-800 mb-5">📋 내 예약 확인</h2>
+
+      {/* 전화번호 조회 */}
+      <div className="bg-white rounded-xl shadow p-4 mb-5">
+        <label className="block text-sm font-medium text-gray-600 mb-2">전화번호로 조회</label>
+        <div className="flex gap-2">
+          <input
+            type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+            placeholder="010-1234-5678"
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
+            onKeyDown={e => e.key === 'Enter' && handleSearch()}
+          />
+          <button
+            onClick={() => handleSearch()}
+            disabled={loading}
+            className="bg-green-700 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-800 transition"
+          >
+            조회
+          </button>
+        </div>
+      </div>
+
+      {/* 결과 */}
+      {searched && (
+        reservations.length === 0 ? (
+          <div className="text-center py-12 text-gray-400">
+            <div className="text-4xl mb-2">📭</div>
+            <p>예약 내역이 없습니다</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {reservations.map(r => (
+              <div key={r.id} className="bg-white rounded-xl shadow p-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="text-lg font-bold text-green-700">
+                      {dayjs(r.slot_date).format('MM월 DD일')} {r.slot_time}
+                    </div>
+                    <div className="text-sm text-gray-500 mt-1">
+                      {r.name} · {r.people_count}명 · {r.holes}홀
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleCancel(r.id)}
+                    className="text-xs text-red-500 border border-red-300 px-3 py-1 rounded-lg hover:bg-red-50 transition"
+                  >
+                    취소
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}

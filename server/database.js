@@ -65,6 +65,21 @@ db.serialize(() => {
     extra_memo     TEXT,
     checked_in_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // ✅ 그린피 차등 규칙 테이블
+  db.run(`CREATE TABLE IF NOT EXISTS green_fee_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_type  TEXT    NOT NULL CHECK(rule_type IN ('period','weekday')),
+    label      TEXT    NOT NULL,
+    date_from  TEXT,
+    date_to    TEXT,
+    weekdays   TEXT,
+    fee_9      INTEGER NOT NULL DEFAULT 30000,
+    fee_18     INTEGER NOT NULL DEFAULT 55000,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    priority   INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
 });
 
 module.exports = db;

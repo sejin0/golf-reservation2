@@ -1,12 +1,13 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 
 const nav = [
-  { to: '/admin',              label: '📊 대시보드' },
-  { to: '/admin/reservations', label: '📋 예약현황' },
-  { to: '/admin/checkin',      label: '✅ 체크인' },
-  { to: '/admin/teetime-setup',label: '⏰ 티타임설정' },
-  { to: '/admin/settings',     label: '⚙️ 기본설정' },
-  { to: '/admin/stats',        label: '📈 통계' },
+  { to: '/admin',               label: '📊 대시보드' },
+  { to: '/admin/reservations',  label: '📋 예약현황' },
+  { to: '/admin/checkin',       label: '✅ 체크인' },
+  { to: '/admin/teetime-setup', label: '⏰ 티타임설정' },
+  { to: '/admin/greenfee',      label: '💰 그린피설정' },   // ✅ 추가
+  { to: '/admin/settings',      label: '⚙️ 기본설정' },
+  { to: '/admin/stats',         label: '📈 통계' },
 ];
 
 export default function AdminLayout() {

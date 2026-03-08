@@ -16,6 +16,7 @@ app.use('/api/customers',     require('./routes/customers'));
 app.use('/api/reservations',  require('./routes/reservations'));
 app.use('/api/checkin',       require('./routes/checkin'));
 app.use('/api/stats',         require('./routes/stats'));
+app.use('/api/greenfee',      require('./routes/greenfee'));   // ✅ 그린피 차등 설정
 
 // 서버 상태 확인용
 app.get('/api/health', (req, res) => {

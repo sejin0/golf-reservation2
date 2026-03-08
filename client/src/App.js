@@ -14,6 +14,7 @@ import ReservationMgmt from './pages/admin/ReservationMgmt';
 import CheckIn from './pages/admin/CheckIn';
 import Settings from './pages/admin/Settings';
 import Stats from './pages/admin/Stats';
+import GreenFeeSettings from './pages/admin/GreenFeeSettings'; // ✅ 그린피 차등 설정
 
 // 공통 레이아웃
 import CustomerLayout from './components/CustomerLayout';
@@ -39,6 +40,7 @@ function App() {
           <Route path="checkin" element={<CheckIn />} />
           <Route path="settings" element={<Settings />} />
           <Route path="stats" element={<Stats />} />
+          <Route path="greenfee" element={<GreenFeeSettings />} /> {/* ✅ */}
         </Route>
 
         <Route path="*" element={<Navigate to="/" />} />

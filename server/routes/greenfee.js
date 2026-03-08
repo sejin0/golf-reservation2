@@ -1,47 +1,13 @@
 /**
  * 그린피 차등 설정 라우터
- *
  * 우선순위: 기간 규칙 > 요일 규칙 > 기본 설정(settings)
- *
- * 테이블 구조
- * ─────────────────────────────────────────────────────
- * green_fee_rules
- *   id          INTEGER PK
- *   rule_type   TEXT  'period' | 'weekday'
- *   label       TEXT  규칙 이름 (예: "여름 성수기", "주말")
- *   -- 기간 규칙 전용
- *   date_from   TEXT  YYYY-MM-DD
- *   date_to     TEXT  YYYY-MM-DD
- *   -- 요일 규칙 전용 (0=일,1=월,...,6=토, 복수 콤마구분 "0,6")
- *   weekdays    TEXT
- *   -- 공통 금액
- *   fee_9       INTEGER
- *   fee_18      INTEGER
- *   is_active   INTEGER DEFAULT 1
- *   priority    INTEGER DEFAULT 0  (높을수록 우선)
- *   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+ * 테이블 생성은 database.js 에서 일괄 처리
  */
 
 const express = require('express');
 const router  = express.Router();
 const db      = require('../database');
-
-/* ───────────────────────────── 초기화 ───────────────────────────── */
-// 테이블이 없으면 생성 (서버 시작 시 database.js serialize 에서 이미 만들어도 되지만
-// 여기서 보장용으로도 실행)
-db.run(`CREATE TABLE IF NOT EXISTS green_fee_rules (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  rule_type  TEXT    NOT NULL CHECK(rule_type IN ('period','weekday')),
-  label      TEXT    NOT NULL,
-  date_from  TEXT,
-  date_to    TEXT,
-  weekdays   TEXT,
-  fee_9      INTEGER NOT NULL DEFAULT 30000,
-  fee_18     INTEGER NOT NULL DEFAULT 55000,
-  is_active  INTEGER NOT NULL DEFAULT 1,
-  priority   INTEGER NOT NULL DEFAULT 0,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
+// ※ 테이블 생성은 database.js 에서 일괄 처리 — 여기선 중복 생성 없음
 
 /* ─────────────────── 목록 조회 GET /api/greenfee ─────────────────── */
 router.get('/', (req, res) => {

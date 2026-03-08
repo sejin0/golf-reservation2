@@ -1,122 +1,201 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import dayjs from 'dayjs';
 
 export default function AdminDashboard() {
-  const [date, setDate] = useState(dayjs().format('YYYY-MM-DD'));
-  const [stats, setStats] = useState(null);
-  const [slots, setSlots] = useState([]);
-  const [reservations, setReservations] = useState([]);
+  const [date, setDate]       = useState(dayjs().format('YYYY-MM-DD'));
+  const [stats, setStats]     = useState(null);
+  const [slots, setSlots]     = useState([]);
+  const [mainList, setMainList] = useState([]);
+  const [joinList, setJoinList] = useState([]);
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
-  const loadData = async (d) => {
+  const loadData = useCallback(async (d) => {
     setLoading(true);
     try {
       const [statsRes, slotsRes, rsvRes] = await Promise.all([
-        api.get(`/stats/daily?date=${d}`),
+        api.get(`/stats/daily?date=${d}`).catch(() => ({ data: null })),
         api.get(`/teetimes?date=${d}`),
         api.get(`/reservations?date=${d}`),
       ]);
       setStats(statsRes.data);
       setSlots(Array.isArray(slotsRes.data) ? slotsRes.data : []);
-      setReservations(Array.isArray(rsvRes.data) ? rsvRes.data : []);
-    } catch {
-      alert('조회 실패');
+      setMainList(Array.isArray(rsvRes.data?.main) ? rsvRes.data.main : []);
+      setJoinList(Array.isArray(rsvRes.data?.join) ? rsvRes.data.join : []);
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadData(date); }, [date]);
+  useEffect(() => { loadData(date); }, [date, loadData]);
 
-  const openSlots  = slots.filter(s => s.status === 'open').length;
-  const fullSlots  = slots.filter(s => s.status === 'full').length;
-  const closedSlots = slots.filter(s => s.status === 'closed').length;
+  /* ── 슬롯별 그룹핑 ── */
+  const mainBySlot = {};
+  mainList.forEach(r => {
+    if (!mainBySlot[r.slot_id]) mainBySlot[r.slot_id] = [];
+    mainBySlot[r.slot_id].push(r);
+  });
+  const joinBySlot = {};
+  joinList.forEach(r => {
+    if (!joinBySlot[r.slot_id]) joinBySlot[r.slot_id] = [];
+    joinBySlot[r.slot_id].push(r);
+  });
+
+  /* ── 슬롯 상태 통계 ── */
+  const openCount   = slots.filter(s => s.status === 'open').length;
+  const fullCount   = slots.filter(s => s.status === 'full').length;
+  const closedCount = slots.filter(s => s.status === 'closed').length;
+
+  const totalMainPeople = mainList.reduce((s, r) => s + r.people_count, 0);
+  const totalJoinPeople = joinList.reduce((s, r) => s + r.people_count, 0);
+  const totalPeople     = totalMainPeople + totalJoinPeople;
+
+  const quickMenus = [
+    { to: '/admin/reservations', icon: '📋', label: '예약 현황',  color: 'bg-blue-50  text-blue-600'  },
+    { to: '/admin/checkin',      icon: '✅', label: '체크인',     color: 'bg-green-50 text-green-600' },
+    { to: '/admin/teetime-setup',icon: '⏰', label: '티타임 설정', color: 'bg-yellow-50 text-yellow-600'},
+    { to: '/admin/greenfee',     icon: '💰', label: '그린피 설정', color: 'bg-purple-50 text-purple-600'},
+    { to: '/admin/stats',        icon: '📊', label: '통계',       color: 'bg-orange-50 text-orange-600'},
+    { to: '/admin/settings',     icon: '⚙️', label: '기본 설정',  color: 'bg-gray-50   text-gray-600'  },
+  ];
 
   return (
     <div className="max-w-2xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">📊 대시보드</h1>
+      <h1 className="text-2xl font-bold text-gray-800 mb-6">🏌️ 관리자 대시보드</h1>
+
+      {/* 날짜 선택 */}
+      <div className="bg-white rounded-xl shadow p-4 mb-5 flex items-center gap-3 flex-wrap">
         <input
           type="date" value={date}
           onChange={e => setDate(e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
         />
+        <span className="text-sm text-gray-500">
+          {dayjs(date).format('YYYY년 MM월 DD일 (ddd)')}
+        </span>
       </div>
 
+      {/* 빠른 메뉴 */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        {quickMenus.map(({ to, icon, label, color }) => (
+          <Link
+            key={to}
+            to={to}
+            className={`${color} rounded-xl p-4 text-center hover:opacity-80 transition shadow-sm font-medium text-sm`}
+          >
+            <div className="text-2xl mb-1">{icon}</div>
+            {label}
+          </Link>
+        ))}
+      </div>
+
+      {/* 요약 통계 카드 */}
       {loading ? (
-        <div className="text-center py-16 text-gray-400">불러오는 중...</div>
+        <div className="text-center py-8 text-gray-400">불러오는 중...</div>
       ) : (
         <>
-          {/* 오늘 요약 */}
-          <div className="grid grid-cols-2 gap-3 mb-5">
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            {/* 팀/조인 인원 */}
             <div className="bg-white rounded-xl shadow p-4">
-              <div className="text-xs text-gray-500 mb-1">예약 건수</div>
-              <div className="text-3xl font-bold text-blue-600">
-                {stats?.reservation_count || 0}
+              <p className="text-xs text-gray-400 mb-1">오늘 예약 인원</p>
+              <div className="flex items-end gap-2">
+                <span className="text-3xl font-bold text-gray-800">{totalPeople}</span>
+                <span className="text-sm text-gray-400 pb-0.5">명</span>
+              </div>
+              <div className="mt-2 flex gap-3 text-xs">
+                <span className="text-green-600">팀 {totalMainPeople}명</span>
+                <span className="text-blue-500">조인 {totalJoinPeople}명</span>
               </div>
             </div>
+            {/* 매출 */}
             <div className="bg-white rounded-xl shadow p-4">
-              <div className="text-xs text-gray-500 mb-1">예약 인원</div>
-              <div className="text-3xl font-bold text-orange-500">
-                {stats?.total_people || 0}
+              <p className="text-xs text-gray-400 mb-1">예상 그린피 매출</p>
+              <div className="flex items-end gap-2">
+                <span className="text-3xl font-bold text-green-700">
+                  {stats?.total_revenue ? Math.round(stats.total_revenue / 10000) : 0}
+                </span>
+                <span className="text-sm text-gray-400 pb-0.5">만원</span>
               </div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-4">
-              <div className="text-xs text-gray-500 mb-1">매출</div>
-              <div className="text-2xl font-bold text-green-700">
-                {(stats?.total_revenue || 0).toLocaleString()}원
-              </div>
-            </div>
-            <div className="bg-white rounded-xl shadow p-4">
-              <div className="text-xs text-gray-500 mb-1">슬롯 현황</div>
-              <div className="text-sm mt-1 flex flex-col gap-1">
-                <span className="text-green-600">빈자리 {openSlots}개</span>
-                <span className="text-red-500">만석 {fullSlots}개</span>
-                <span className="text-gray-400">마감 {closedSlots}개</span>
+              <div className="mt-2 text-xs text-gray-400">
+                예약 {stats?.reservation_count ?? mainList.length + joinList.length}건
               </div>
             </div>
           </div>
 
-          {/* 빠른 메뉴 */}
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            {[
-              { label: '📋 예약현황', path: '/admin/reservations' },
-              { label: '✅ 체크인',   path: '/admin/checkin' },
-              { label: '⏰ 티타임설정', path: '/admin/teetime-setup' },
-              { label: '📈 통계',     path: '/admin/stats' },
-            ].map(m => (
-              <button
-                key={m.path}
-                onClick={() => navigate(m.path)}
-                className="bg-white rounded-xl shadow p-4 text-left text-sm font-medium text-gray-700 hover:bg-green-50 hover:text-green-700 transition"
-              >
-                {m.label}
-              </button>
-            ))}
+          {/* 슬롯 상태 */}
+          <div className="bg-white rounded-xl shadow p-4 mb-5">
+            <p className="text-xs text-gray-400 mb-3">슬롯 현황 (총 {slots.length}개)</p>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: '운영중', val: openCount,   bg: 'bg-green-50', cls: 'text-green-600' },
+                { label: '만석',   val: fullCount,   bg: 'bg-red-50',   cls: 'text-red-500'   },
+                { label: '마감',   val: closedCount, bg: 'bg-gray-50',  cls: 'text-gray-400'  },
+              ].map(({ label, val, bg, cls }) => (
+                <div key={label} className={`${bg} rounded-xl p-3 text-center`}>
+                  <div className={`text-xl font-bold ${cls}`}>{val}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* 오늘 예약 목록 */}
           <div className="bg-white rounded-xl shadow overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-700">
-              오늘 예약 목록
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="font-semibold text-gray-800 text-sm">오늘의 예약</h2>
+              <Link to="/admin/reservations" className="text-xs text-green-600 hover:underline">
+                전체 보기 →
+              </Link>
             </div>
-            {reservations.length === 0 ? (
+            {mainList.length === 0 && joinList.length === 0 ? (
               <div className="text-center py-8 text-gray-400 text-sm">예약이 없습니다</div>
             ) : (
-              <div className="divide-y divide-gray-100">
-                {reservations.map(r => (
-                  <div key={r.id} className="px-4 py-3 flex items-center justify-between">
-                    <div>
-                      <span className="font-medium text-green-700 mr-2">{r.slot_time}</span>
-                      <span className="text-gray-800">{r.name}</span>
-                      <span className="text-gray-400 text-sm ml-2">{r.phone}</span>
-                    </div>
-                    <span className="text-xs text-gray-500">{r.people_count}명 · {r.holes}홀</span>
-                  </div>
-                ))}
+              <div className="divide-y divide-gray-50">
+                {/* 슬롯별로 묶어서 표시 */}
+                {slots
+                  .filter(slot => (mainBySlot[slot.id]?.length || 0) + (joinBySlot[slot.id]?.length || 0) > 0)
+                  .map(slot => {
+                    const mains = mainBySlot[slot.id] || [];
+                    const joins = joinBySlot[slot.id] || [];
+                    const total = mains.reduce((s, r) => s + r.people_count, 0)
+                                + joins.reduce((s, r) => s + r.people_count, 0);
+                    return (
+                      <div key={slot.id} className="px-4 py-3">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="font-bold text-gray-700">{slot.slot_time}</span>
+                          <div className="flex items-center gap-2">
+                            {joins.length > 0 && (
+                              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                                조인 {joins.length}팀
+                              </span>
+                            )}
+                            <span className="text-xs text-gray-400">{total}명</span>
+                          </div>
+                        </div>
+                        {/* 팀 예약자 */}
+                        {mains.map(r => (
+                          <div key={`m-${r.id}`} className="flex items-center gap-2 text-sm py-0.5">
+                            <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">팀</span>
+                            <span className="text-gray-700">{r.name}</span>
+                            <span className="text-gray-400 text-xs">{r.phone}</span>
+                            <span className="text-gray-400 text-xs ml-auto">{r.people_count}명 · {r.holes}홀</span>
+                          </div>
+                        ))}
+                        {/* 조인 예약자 */}
+                        {joins.map((r, ji) => (
+                          <div key={`j-${r.id}`} className="flex items-center gap-2 text-sm py-0.5 pl-2">
+                            <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">조인{ji+1}</span>
+                            <span className="text-gray-700">{r.name}</span>
+                            <span className="text-gray-400 text-xs">{r.phone}</span>
+                            <span className="text-gray-400 text-xs ml-auto">{r.people_count}명 · {r.holes}홀</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </div>

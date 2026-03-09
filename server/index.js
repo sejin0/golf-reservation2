@@ -25,7 +25,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.send('Golf Reservation Server is running');
+  res.send('Golf Reservation Server is running!!');
 });
 
 app.listen(PORT, '0.0.0.0', () => {

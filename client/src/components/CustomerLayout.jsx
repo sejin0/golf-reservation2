@@ -12,11 +12,8 @@ export default function CustomerLayout() {
     <div className="min-h-screen bg-gray-50">
       {/* 상단 헤더 */}
       <header className="bg-green-700 text-white shadow">
-        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-start">
           <Link to="/" className="text-xl font-bold tracking-tight">⛳ 파3 골프장</Link>
-          <Link to="/admin" className="text-xs bg-green-900 px-2 py-1 rounded opacity-60 hover:opacity-100">
-            관리자
-          </Link>
         </div>
       </header>
 

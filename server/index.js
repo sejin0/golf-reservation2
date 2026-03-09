@@ -2,7 +2,7 @@ const express = require('express');
 const cors    = require('cors');
 
 const app  = express();
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 
 app.use(cors({
   origin: [
@@ -27,6 +27,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ 서버 실행 중: http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ 서버 실행 중: 포트 ${PORT}`);
 });

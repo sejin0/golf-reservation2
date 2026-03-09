@@ -4,16 +4,11 @@ const cors    = require('cors');
 const app  = express();
 const PORT = process.env.PORT || 4000;
 
-//app.use(cors({
-//  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:3000', 'http://localhost:3001'],
-//  credentials: true,
-//}));
-
 app.use(cors({
-  origin: '*', // 우선 모든 곳에서 오는 요청을 허용해 봅니다
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
+  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:3000', 'http://localhost:3001'],
+  credentials: true,
 }));
+
 
 app.use(express.json());
 

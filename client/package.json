@@ -20,6 +20,7 @@
     "start": "serve -s build -l $PORT",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "dev": "react-scripts start",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {

@@ -1,131 +1,115 @@
 const express = require('express');
-const router  = express.Router();
-const db      = require('../database');
-
-/* ─────────────────────────────────────────────────────
-   join_reservations 테이블 존재 여부 확인 헬퍼
-   (구 버전 DB 호환 — 테이블 없으면 빈 배열 반환)
-───────────────────────────────────────────────────── */
-function queryJoin(sql, params, cb) {
-  db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='join_reservations'", (e, t) => {
-    if (e || !t) return cb(null, []);
-    db.all(sql, params, cb);
-  });
-}
-
-/* ─────────────────────────────────────────────────────
-   공통: 기간 내 통계 쿼리 헬퍼
-   주예약 + 조인예약 인원/매출 합산
-───────────────────────────────────────────────────── */
-function periodStats(fromDate, toDate, callback) {
-  // 주예약 통계
-  db.all(`
-    SELECT ts.slot_date AS date,
-           COUNT(DISTINCT r.id)               AS main_team_count,
-           COALESCE(SUM(r.people_count), 0)   AS main_people,
-           COALESCE(SUM(ci.pay_amount + COALESCE(ci.extra_charge,0)), 0) AS main_revenue
-    FROM reservations r
-    JOIN tee_slots ts ON ts.id = r.slot_id
-    LEFT JOIN checkins ci ON ci.reservation_id = r.id
-    WHERE ts.slot_date BETWEEN ? AND ? AND r.status = 'confirmed'
-    GROUP BY ts.slot_date
-  `, [fromDate, toDate], (err, mainRows) => {
-    if (err) return callback(err);
-
-    // 조인예약 통계 (테이블 존재 확인 포함)
-    queryJoin(`
-      SELECT ts.slot_date AS date,
-             COUNT(DISTINCT jr.id)              AS join_team_count,
-             COALESCE(SUM(jr.people_count), 0)  AS join_people,
-             COALESCE(SUM(ci.pay_amount + COALESCE(ci.extra_charge,0)), 0) AS join_revenue
-      FROM join_reservations jr
-      JOIN tee_slots ts ON ts.id = jr.slot_id
-      LEFT JOIN checkins ci ON ci.join_reservation_id = jr.id
-      WHERE ts.slot_date BETWEEN ? AND ? AND jr.status = 'confirmed'
-      GROUP BY ts.slot_date
-    `, [fromDate, toDate], (err2, joinRows) => {
-      if (err2) return callback(err2);
-
-      // 날짜별 머지
-      const map = {};
-      (mainRows || []).forEach(r => {
-        map[r.date] = {
-          date:            r.date,
-          main_team_count: r.main_team_count,
-          join_team_count: 0,
-          total_people:    r.main_people,
-          total_revenue:   r.main_revenue,
-        };
-      });
-      (joinRows || []).forEach(r => {
-        if (map[r.date]) {
-          map[r.date].join_team_count += r.join_team_count;
-          map[r.date].total_people    += r.join_people;
-          map[r.date].total_revenue   += r.join_revenue;
-        } else {
-          map[r.date] = {
-            date:            r.date,
-            main_team_count: 0,
-            join_team_count: r.join_team_count,
-            total_people:    r.join_people,
-            total_revenue:   r.join_revenue,
-          };
-        }
-      });
-
-      const result = Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
-      callback(null, result);
-    });
-  });
-}
+const router = express.Router();
+const db = require('../db'); // PostgreSQL 연결 설정
 
 /* ═══════════════════════════════════════════════════
-   GET /api/stats/daily?date=
+   POST /api/checkin — 체크인 + 결제 등록
 ═══════════════════════════════════════════════════ */
-router.get('/daily', (req, res) => {
+router.post('/', async (req, res) => {
+  const { 
+    reservation_id, 
+    join_reservation_id,
+    pay_method, 
+    pay_amount, 
+    extra_charge, 
+    extra_memo 
+  } = req.body;
+
+  // 1. 유효성 검사
+  if (!reservation_id && !join_reservation_id)
+    return res.status(400).json({ error: 'reservation_id 또는 join_reservation_id 필요' });
+  if (reservation_id && join_reservation_id)
+    return res.status(400).json({ error: '둘 다 동시에 입력할 수 없습니다.' });
+
+  try {
+    // 2. 이미 체크인했는지 확인
+    const checkSql = reservation_id
+      ? 'SELECT id FROM checkins WHERE reservation_id = $1'
+      : 'SELECT id FROM checkins WHERE join_reservation_id = $1';
+    const checkParam = reservation_id || join_reservation_id;
+
+    const existRes = await db.query(checkSql, [checkParam]);
+    if (existRes.rows.length > 0) {
+      return res.status(400).json({ error: '이미 체크인된 예약입니다.' });
+    }
+
+    // 3. 예약이 유효한지(존재하며 확정 상태인지) 확인
+    const rsvSql = reservation_id
+      ? 'SELECT id FROM reservations WHERE id = $1 AND status = \'confirmed\''
+      : 'SELECT id FROM join_reservations WHERE id = $1 AND status = \'confirmed\'';
+
+    const rsvRes = await db.query(rsvSql, [checkParam]);
+    if (rsvRes.rows.length === 0) {
+      return res.status(404).json({ error: '예약 없음 또는 취소된 예약입니다.' });
+    }
+
+    // 4. 체크인 정보 삽입 (RETURNING 사용)
+    const insertRes = await db.query(`
+      INSERT INTO checkins
+        (reservation_id, join_reservation_id, pay_method, pay_amount, extra_charge, extra_memo)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id
+    `, [
+      reservation_id || null,
+      join_reservation_id || null,
+      pay_method || 'cash',
+      pay_amount || 0,
+      extra_charge || 0,
+      extra_memo || ''
+    ]);
+
+    res.json({ success: true, checkin_id: insertRes.rows[0].id });
+  } catch (err) {
+    console.error('체크인 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════
+   GET /api/checkin?date= — 날짜별 체크인 목록
+═══════════════════════════════════════════════════ */
+router.get('/', async (req, res) => {
   const { date } = req.query;
-  if (!date) return res.status(400).json({ error: 'date 필요' });
+  if (!date) return res.status(400).json({ error: '날짜 파라미터가 필요합니다.' });
 
-  periodStats(date, date, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    const row = rows[0] || {
-      date,
-      main_team_count: 0,
-      join_team_count: 0,
-      total_people:    0,
-      total_revenue:   0,
-    };
-    res.json({ ...row, reservation_count: row.main_team_count });
-  });
-});
+  try {
+    // 1. 주예약 체크인 목록 조회
+    const mainCheckins = await db.query(`
+      SELECT ci.*, 'main' AS booking_type,
+             r.people_count, r.holes, r.id AS reservation_id,
+             ts.slot_date, ts.slot_time, COALESCE(ts.course, 'A') AS course,
+             c.name, c.phone
+      FROM checkins ci
+      JOIN reservations r ON r.id = ci.reservation_id
+      JOIN tee_slots ts   ON ts.id = r.slot_id
+      JOIN customers c    ON c.id  = r.customer_id
+      WHERE ts.slot_date = $1 AND ci.reservation_id IS NOT NULL
+      ORDER BY ts.slot_time
+    `, [date]);
 
-/* ═══════════════════════════════════════════════════
-   GET /api/stats/weekly?from=&to=
-═══════════════════════════════════════════════════ */
-router.get('/weekly', (req, res) => {
-  const { from, to } = req.query;
-  if (!from || !to) return res.status(400).json({ error: 'from, to 필요' });
+    // 2. 조인예약 체크인 목록 조회
+    const joinCheckins = await db.query(`
+      SELECT ci.*, 'join' AS booking_type,
+             jr.people_count, jr.holes, jr.id AS join_reservation_id,
+             jr.reservation_id AS main_reservation_id,
+             ts.slot_date, ts.slot_time, COALESCE(ts.course, 'A') AS course,
+             c.name, c.phone
+      FROM checkins ci
+      JOIN join_reservations jr ON jr.id = ci.join_reservation_id
+      JOIN tee_slots ts         ON ts.id = jr.slot_id
+      JOIN customers c          ON c.id  = jr.customer_id
+      WHERE ts.slot_date = $1 AND ci.join_reservation_id IS NOT NULL
+      ORDER BY ts.slot_time
+    `, [date]);
 
-  periodStats(from, to, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-/* ═══════════════════════════════════════════════════
-   GET /api/stats/monthly?month=YYYY-MM
-═══════════════════════════════════════════════════ */
-router.get('/monthly', (req, res) => {
-  const { month } = req.query;
-  if (!month) return res.status(400).json({ error: 'month 필요' });
-
-  const from = `${month}-01`;
-  const to   = `${month}-31`;
-
-  periodStats(from, to, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+    res.json({ 
+      main: mainCheckins.rows, 
+      join: joinCheckins.rows 
+    });
+  } catch (err) {
+    console.error('체크인 목록 조회 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

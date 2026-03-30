@@ -1,42 +1,59 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../database');
+const db = require('../db'); // PostgreSQL 연결 설정 (db.js)
 
-// 전화번호로 고객 조회, 없으면 자동 등록
-// POST /api/customers/lookup  { name, phone }
-router.post('/lookup', (req, res) => {
+// 1. 전화번호로 고객 조회, 없으면 자동 등록
+// POST /api/customers/lookup { name, phone }
+router.post('/lookup', async (req, res) => {
   const { name, phone } = req.body;
   console.log('lookup 요청:', name, phone);
-  if (!name || !phone) return res.status(400).json({ error: '이름과 전화번호를 입력하세요' });
 
-  db.get('SELECT * FROM customers WHERE phone = ?', [phone], (err, customer) => {
-    if (err) return res.status(500).json({ error: err.message });
+  if (!name || !phone) {
+    return res.status(400).json({ error: '이름과 전화번호를 입력하세요' });
+  }
 
-    if (customer) return res.json(customer);
+  try {
+    // 먼저 고객이 있는지 확인
+    const checkRes = await db.query('SELECT * FROM customers WHERE phone = $1', [phone]);
+    
+    if (checkRes.rows.length > 0) {
+      // 이미 있는 고객이면 바로 반환
+      return res.json(checkRes.rows[0]);
+    }
 
-    // 자동 등록
-    db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [name, phone], function(err2) {
-      if (err2) return res.status(500).json({ error: err2.message });
-      db.get('SELECT * FROM customers WHERE id = ?', [this.lastID], (err3, row) => {
-        if (err3) return res.status(500).json({ error: err3.message });
-        res.json(row);
-      });
-    });
-  });
+    // 고객이 없으면 자동 등록 (RETURNING * 를 사용하여 저장된 행을 즉시 반환)
+    const insertRes = await db.query(
+      'INSERT INTO customers (name, phone) VALUES ($1, $2) RETURNING *',
+      [name, phone]
+    );
+
+    res.json(insertRes.rows[0]);
+  } catch (err) {
+    console.error('고객 조회/등록 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 고객 목록 검색 (관리자)
+// 2. 고객 목록 검색 (관리자)
 // GET /api/customers?q=홍길동
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const q = `%${req.query.q || ''}%`;
-  db.all(`
-    SELECT * FROM customers
-    WHERE name LIKE ? OR phone LIKE ?
-    ORDER BY created_at DESC LIMIT 50
-  `, [q, q], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+  
+  try {
+    // PostgreSQL은 대소문자를 구분할 수 있으므로 ILIKE를 쓰면 더 편리합니다.
+    const queryText = `
+      SELECT * FROM customers 
+      WHERE name LIKE $1 OR phone LIKE $2 
+      ORDER BY created_at DESC 
+      LIMIT 50
+    `;
+    
+    const result = await db.query(queryText, [q, q]);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('고객 목록 검색 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

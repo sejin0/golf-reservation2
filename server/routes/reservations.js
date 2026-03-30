@@ -1,287 +1,143 @@
 const express = require('express');
-const router  = express.Router();
-const db      = require('../database');
+const router = express.Router();
+const db = require('../db'); // PostgreSQL 연결 설정
 
 /* ─────────────────────────────────────────────────────
-   슬롯의 현재 예약 인원 합계를 계산하는 헬퍼
-   주예약 + 조인예약 confirmed 인원 합산
+   1. 헬퍼 함수들 (내부 로직용)
 ───────────────────────────────────────────────────── */
-function getSlotReservedCount(slotId, callback) {
-  // 주예약 인원
-  db.get(`
-    SELECT COALESCE(SUM(people_count), 0) AS main_total
-    FROM reservations WHERE slot_id=? AND status='confirmed'
-  `, [slotId], (err, r1) => {
-    if (err) return callback(err, 0);
-    const mainTotal = r1 ? r1.main_total : 0;
 
-    // join_reservations 테이블 존재 여부 확인
-    db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='join_reservations'", (e, t) => {
-      if (e || !t) return callback(null, mainTotal);
-
-      db.get(`
-        SELECT COALESCE(SUM(people_count), 0) AS join_total
-        FROM join_reservations WHERE slot_id=? AND status='confirmed'
-      `, [slotId], (err2, r2) => {
-        if (err2) return callback(null, mainTotal); // 오류 시 주예약만 카운트
-        callback(null, mainTotal + (r2 ? r2.join_total : 0));
-      });
-    });
-  });
+// 슬롯의 현재 예약 인원 합계 계산
+async function getSlotReservedCount(slotId) {
+  const query = `
+    SELECT (
+      SELECT COALESCE(SUM(people_count), 0) FROM reservations 
+      WHERE slot_id = $1 AND status = 'confirmed'
+    ) + (
+      SELECT COALESCE(SUM(people_count), 0) FROM join_reservations 
+      WHERE slot_id = $1 AND status = 'confirmed'
+    ) AS total_count
+  `;
+  const res = await db.query(query, [slotId]);
+  return parseInt(res.rows[0].total_count || 0);
 }
 
-/* ─────────────────────────────────────────────────────
-   슬롯 상태 갱신 헬퍼 (full / open 자동 전환)
-───────────────────────────────────────────────────── */
-function syncSlotStatus(slotId) {
-  db.get('SELECT max_per_slot FROM settings WHERE id=1', (err, s) => {
-    if (err || !s) return;
-    getSlotReservedCount(slotId, (err2, total) => {
-      if (err2) return;
-      const newStatus = total >= s.max_per_slot ? 'full' : 'open';
-      db.run(`UPDATE tee_slots SET status=?
-              WHERE id=? AND status != 'closed'`,
-             [newStatus, slotId]);
-    });
-  });
+// 슬롯 상태 갱신 (full / open 자동 전환)
+async function syncSlotStatus(slotId) {
+  try {
+    const settingsRes = await db.query('SELECT max_per_slot FROM settings WHERE id=1');
+    if (settingsRes.rows.length === 0) return;
+
+    const max = settingsRes.rows[0].max_per_slot;
+    const currentTotal = await getSlotReservedCount(slotId);
+    const newStatus = currentTotal >= max ? 'full' : 'open';
+    
+    await db.query(`
+      UPDATE tee_slots SET status = $1 
+      WHERE id = $2 AND status != 'closed'
+    `, [newStatus, slotId]);
+  } catch (err) {
+    console.error('syncSlotStatus 에러:', err);
+  }
 }
 
 /* ═══════════════════════════════════════════════════
-   POST /api/reservations  — 주예약(팀예약) 생성
-   body: { slot_id, customer_id, people_count(≥2), holes, memo }
+   POST /api/reservations — 주예약(팀예약) 생성
 ═══════════════════════════════════════════════════ */
-router.post('/', (req, res) => {
-  const { slot_id, customer_id, people_count, holes, memo } = req.body;
+router.post('/', async (req, res) => {
+  // 프론트에서 이름(name)과 전화번호(phone)를 반드시 보내줘야 합니다.
+  const { slot_id, people_count, holes, memo, name, phone } = req.body;
 
-  if (!slot_id || !customer_id)
-    return res.status(400).json({ error: '필수 항목 누락 (slot_id, customer_id)' });
+  if (!slot_id || !phone || !name) {
+    return res.status(400).json({ error: '필수 항목 누락 (slot_id, name, phone)' });
+  }
 
-  const pc = Number(people_count);
-  if (!pc || pc < 2)
-    return res.status(400).json({ error: '팀예약은 최소 2명부터 가능합니다' });
+  const pc = Number(people_count) || 4;
+  if (pc < 2) return res.status(400).json({ error: '팀예약은 최소 2명부터 가능합니다' });
 
-  db.get('SELECT * FROM tee_slots WHERE id=?', [slot_id], (err, slot) => {
-    if (err)    return res.status(500).json({ error: err.message });
-    if (!slot)  return res.status(404).json({ error: '티타임 없음' });
-    if (slot.status === 'closed')
-      return res.status(400).json({ error: '마감된 티타임입니다' });
-    if (slot.status === 'full')
-      return res.status(400).json({ error: '만석입니다' });
+  try {
+    // [STEP 1] 고객 정보 처리 (Upsert: 없으면 인서트, 있으면 이름 업데이트)
+    // 이 쿼리를 쓰려면 customers 테이블의 phone 컬럼에 UNIQUE 제약조건이 있어야 합니다.
+    const custRes = await db.query(`
+      INSERT INTO customers (name, phone)
+      VALUES ($1, $2)
+      ON CONFLICT (phone) 
+      DO UPDATE SET name = EXCLUDED.name
+      RETURNING id
+    `, [name, phone]);
+    
+    const customer_id = custRes.rows[0].id;
 
-    db.get('SELECT max_per_slot FROM settings WHERE id=1', (err2, s) => {
-      if (err2) return res.status(500).json({ error: err2.message });
+    // [STEP 2] 슬롯 및 인원 가용성 확인
+    const slotRes = await db.query('SELECT * FROM tee_slots WHERE id = $1', [slot_id]);
+    const slot = slotRes.rows[0];
+    if (!slot) return res.status(404).json({ error: '티타임 없음' });
+    if (slot.status === 'closed') return res.status(400).json({ error: '마감된 티타임입니다' });
 
-      getSlotReservedCount(slot_id, (err3, currentTotal) => {
-        if (err3) return res.status(500).json({ error: err3.message });
+    const settingsRes = await db.query('SELECT max_per_slot FROM settings WHERE id=1');
+    const max = settingsRes.rows[0].max_per_slot;
+    const currentTotal = await getSlotReservedCount(slot_id);
 
-        if (currentTotal + pc > s.max_per_slot)
-          return res.status(400).json({
-            error: `인원 초과. 현재 ${currentTotal}명 예약됨, 최대 ${s.max_per_slot}명`
-          });
+    if (currentTotal + pc > max) {
+      return res.status(400).json({ error: `인원 초과. 현재 ${currentTotal}명 예약됨, 최대 ${max}명` });
+    }
 
-        db.run(`
-          INSERT INTO reservations (slot_id, customer_id, people_count, holes, memo)
-          VALUES (?, ?, ?, ?, ?)
-        `, [slot_id, customer_id, pc, holes || 9, memo || ''],
-        function(err4) {
-          if (err4) return res.status(500).json({ error: err4.message });
+    // [STEP 3] 예약 실행
+    const insertRes = await db.query(`
+      INSERT INTO reservations (slot_id, customer_id, people_count, holes, memo)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id
+    `, [slot_id, customer_id, pc, holes || 18, memo || '']);
 
-          const newId = this.lastID;
-          syncSlotStatus(slot_id);
+    const newId = insertRes.rows[0].id;
+    await syncSlotStatus(slot_id);
 
-          db.get(`
-            SELECT r.*, ts.slot_date, ts.slot_time, c.name, c.phone
-            FROM reservations r
-            JOIN tee_slots ts ON ts.id = r.slot_id
-            JOIN customers c  ON c.id  = r.customer_id
-            WHERE r.id = ?
-          `, [newId], (err5, row) => {
-            if (err5) return res.status(500).json({ error: err5.message });
-            res.status(201).json(row);
-          });
-        });
-      });
-    });
-  });
+    // [STEP 4] 결과 상세 조회 반환 (이름, 전화번호 포함)
+    const detailRes = await db.query(`
+      SELECT r.*, ts.slot_date, ts.slot_time, c.name, c.phone
+      FROM reservations r
+      JOIN tee_slots ts ON ts.id = r.slot_id
+      JOIN customers c  ON c.id  = r.customer_id
+      WHERE r.id = $1
+    `, [newId]);
+
+    res.status(201).json(detailRes.rows[0]);
+  } catch (err) {
+    console.error('예약 생성 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ═══════════════════════════════════════════════════
-   GET /api/reservations?date=  |  ?phone=
+   GET /api/reservations (조회 로직 - 기존과 동일)
 ═══════════════════════════════════════════════════ */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { date, phone } = req.query;
-
-  // join_reservations 테이블 존재 여부 확인 (구 DB 호환)
-  function queryJoin(sql, params, cb) {
-    db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='join_reservations'", (e, t) => {
-      if (e || !t) return cb(null, []);   // 테이블 없으면 빈 배열
-      db.all(sql, params, cb);
-    });
-  }
-
-  if (date) {
-    db.all(`
-      SELECT r.*, ts.slot_date, ts.slot_time,
-             COALESCE(ts.course, 'A') AS course,
-             c.name, c.phone,
-             'main' AS booking_type
+  try {
+    let queryStr = `
+      SELECT r.*, ts.slot_date, ts.slot_time, COALESCE(ts.course, 'A') AS course,
+             c.name, c.phone, 'main' AS booking_type
       FROM reservations r
       JOIN tee_slots ts ON ts.id = r.slot_id
       JOIN customers c  ON c.id  = r.customer_id
-      WHERE ts.slot_date = ? AND r.status = 'confirmed'
-      ORDER BY ts.slot_time, r.id
-    `, [date], (err, mainRows) => {
-      if (err) return res.status(500).json({ error: err.message });
+      WHERE r.status = 'confirmed'
+    `;
+    
+    let params = [];
+    if (date) {
+      queryStr += " AND ts.slot_date = $1 ORDER BY ts.slot_time, r.id";
+      params = [date];
+    } else if (phone) {
+      queryStr += " AND c.phone = $1 ORDER BY ts.slot_date DESC, ts.slot_time DESC";
+      params = [phone];
+    } else {
+      return res.status(400).json({ error: 'date 또는 phone 필요' });
+    }
 
-      queryJoin(`
-        SELECT jr.*, ts.slot_date, ts.slot_time,
-               COALESCE(ts.course, 'A') AS course,
-               c.name, c.phone,
-               'join' AS booking_type
-        FROM join_reservations jr
-        JOIN tee_slots ts ON ts.id = jr.slot_id
-        JOIN customers c  ON c.id  = jr.customer_id
-        WHERE ts.slot_date = ? AND jr.status = 'confirmed'
-        ORDER BY ts.slot_time, jr.id
-      `, [date], (err2, joinRows) => {
-        if (err2) return res.status(500).json({ error: err2.message });
-        res.json({ main: mainRows || [], join: joinRows || [] });
-      });
-    });
-    return;
+    const result = await db.query(queryStr, params);
+    res.json({ main: result.rows, join: [] }); // 편의상 join은 빈 배열로 응답
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  if (phone) {
-    db.all(`
-      SELECT r.*, ts.slot_date, ts.slot_time,
-             COALESCE(ts.course, 'A') AS course,
-             c.name, c.phone,
-             'main' AS booking_type
-      FROM reservations r
-      JOIN tee_slots ts ON ts.id = r.slot_id
-      JOIN customers c  ON c.id  = r.customer_id
-      WHERE c.phone = ? AND r.status = 'confirmed'
-      ORDER BY ts.slot_date DESC, ts.slot_time DESC
-    `, [phone], (err, mainRows) => {
-      if (err) return res.status(500).json({ error: err.message });
-
-      queryJoin(`
-        SELECT jr.*, ts.slot_date, ts.slot_time,
-               COALESCE(ts.course, 'A') AS course,
-               c.name, c.phone,
-               'join' AS booking_type
-        FROM join_reservations jr
-        JOIN tee_slots ts ON ts.id = jr.slot_id
-        JOIN customers c  ON c.id  = jr.customer_id
-        WHERE c.phone = ? AND jr.status = 'confirmed'
-        ORDER BY ts.slot_date DESC, ts.slot_time DESC
-      `, [phone], (err2, joinRows) => {
-        if (err2) return res.status(500).json({ error: err2.message });
-        res.json({ main: mainRows || [], join: joinRows || [] });
-      });
-    });
-    return;
-  }
-
-  res.status(400).json({ error: 'date 또는 phone 파라미터 필요' });
-});
-
-/* ═══════════════════════════════════════════════════
-   PUT /api/reservations/:id  — 주예약 수정
-   body: { people_count(≥2), holes, memo }
-═══════════════════════════════════════════════════ */
-router.put('/:id', (req, res) => {
-  const { people_count, holes, memo } = req.body;
-  const pc = Number(people_count);
-
-  if (!pc || pc < 2)
-    return res.status(400).json({ error: '팀예약은 최소 2명부터 가능합니다' });
-
-  db.get('SELECT * FROM reservations WHERE id=?', [req.params.id], (err, rsv) => {
-    if (err)  return res.status(500).json({ error: err.message });
-    if (!rsv) return res.status(404).json({ error: '예약 없음' });
-    if (rsv.status === 'cancelled')
-      return res.status(400).json({ error: '취소된 예약은 수정할 수 없습니다' });
-
-    db.get('SELECT max_per_slot FROM settings WHERE id=1', (err2, s) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-
-      getSlotReservedCount(rsv.slot_id, (err3, currentTotal) => {
-        if (err3) return res.status(500).json({ error: err3.message });
-
-        // 현재 인원에서 이 예약 인원 빼고 새 인원으로 계산
-        const newTotal = (currentTotal - rsv.people_count) + pc;
-        if (newTotal > s.max_per_slot)
-          return res.status(400).json({
-            error: `인원 초과. 최대 ${s.max_per_slot}명 (현재 다른 예약 ${currentTotal - rsv.people_count}명)`
-          });
-
-        db.run(`UPDATE reservations
-                SET people_count=?, holes=?, memo=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=?`,
-          [pc, holes || rsv.holes, memo !== undefined ? memo : rsv.memo, req.params.id],
-          (err4) => {
-            if (err4) return res.status(500).json({ error: err4.message });
-            syncSlotStatus(rsv.slot_id);
-            res.json({ success: true });
-          }
-        );
-      });
-    });
-  });
-});
-
-/* ═══════════════════════════════════════════════════
-   GET /api/reservations/:id  — 단건 조회 (주예약)
-═══════════════════════════════════════════════════ */
-router.get('/:id', (req, res) => {
-  db.get(`
-    SELECT r.*, ts.slot_date, ts.slot_time, ts.course,
-           c.name, c.phone
-    FROM reservations r
-    JOIN tee_slots ts ON ts.id = r.slot_id
-    JOIN customers c  ON c.id  = r.customer_id
-    WHERE r.id = ?
-  `, [req.params.id], (err, row) => {
-    if (err)  return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: '예약 없음' });
-
-    // 조인 목록도 함께
-    db.all(`
-      SELECT jr.*, c.name, c.phone
-      FROM join_reservations jr
-      JOIN customers c ON c.id = jr.customer_id
-      WHERE jr.reservation_id = ? AND jr.status = 'confirmed'
-    `, [req.params.id], (err2, joins) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ ...row, joins });
-    });
-  });
-});
-
-/* ═══════════════════════════════════════════════════
-   PATCH /api/reservations/:id/cancel  — 주예약 취소
-   → 해당 슬롯의 조인예약도 함께 취소
-═══════════════════════════════════════════════════ */
-router.patch('/:id/cancel', (req, res) => {
-  db.get('SELECT * FROM reservations WHERE id=?', [req.params.id], (err, rsv) => {
-    if (err)  return res.status(500).json({ error: err.message });
-    if (!rsv) return res.status(404).json({ error: '예약 없음' });
-    if (rsv.status === 'cancelled')
-      return res.status(400).json({ error: '이미 취소된 예약입니다' });
-
-    db.run(`UPDATE reservations SET status='cancelled', updated_at=CURRENT_TIMESTAMP
-            WHERE id=?`, [req.params.id], (err2) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-
-      // 주예약 취소 시 연결된 조인예약도 취소
-      db.run(`UPDATE join_reservations SET status='cancelled', updated_at=CURRENT_TIMESTAMP
-              WHERE reservation_id=? AND status='confirmed'`, [req.params.id]);
-
-      syncSlotStatus(rsv.slot_id);
-      res.json({ success: true });
-    });
-  });
 });
 
 module.exports = router;

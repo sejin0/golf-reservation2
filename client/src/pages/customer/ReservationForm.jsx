@@ -34,6 +34,8 @@ export default function ReservationForm() {
         people_count: peopleCount,
         holes,
         memo,
+        name:         name,
+        phone:        phone,
       });
 
       alert(`팀예약 완료!\n${date} ${time} / ${peopleCount}명 / ${holes}홀`);

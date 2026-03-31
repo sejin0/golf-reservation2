@@ -48,17 +48,21 @@ export default function Stats() {
         <div className="text-xs text-gray-500 mt-1">예약 인원</div>
       </div>
       <div className="bg-white rounded-xl shadow p-4 text-center">
-        <div className="text-lg font-bold text-green-700">{fmtMoney(d.total_revenue)}</div>
-        <div className="text-xs text-gray-500 mt-1">매출</div>
+        <div className="text-lg font-bold text-green-700">{fmtMoney(d.checkin_revenue)}</div>
+        <div className="text-xs text-gray-500 mt-1">체크인 매출</div>
+        <div className="text-xs text-gray-400 mt-1">예상: {fmtMoney(d.expected_revenue)}</div>
+        <div className="text-xs text-red-500 mt-1">미체크인: {d.unpaid_reservations}건</div>
       </div>
     </div>
   );
 
   // 주/월별 테이블
   const TableData = ({ rows }) => {
-    const totalPeople  = rows.reduce((s, r) => s + r.total_people, 0);
-    const totalRevenue = rows.reduce((s, r) => s + r.total_revenue, 0);
-    const totalRsv     = rows.reduce((s, r) => s + r.reservation_count, 0);
+    const totalPeople   = rows.reduce((s, r) => s + r.total_people, 0);
+    const totalExpected = rows.reduce((s, r) => s + (r.expected_revenue || 0), 0);
+    const totalCheckin  = rows.reduce((s, r) => s + (r.checkin_revenue || 0), 0);
+    const totalRsv      = rows.reduce((s, r) => s + r.reservation_count, 0);
+    const totalUnpaid   = rows.reduce((s, r) => s + (r.unpaid_reservations || 0), 0);
 
     return (
       <div className="mt-4">
@@ -73,8 +77,10 @@ export default function Stats() {
             <div className="text-xs text-gray-500 mt-1">총 인원</div>
           </div>
           <div className="bg-white rounded-xl shadow p-4 text-center">
-            <div className="text-lg font-bold text-green-700">{fmtMoney(totalRevenue)}</div>
-            <div className="text-xs text-gray-500 mt-1">총 매출</div>
+            <div className="text-lg font-bold text-green-700">{fmtMoney(totalCheckin)}</div>
+            <div className="text-xs text-gray-500 mt-1">총 체크인 매출</div>
+            <div className="text-xs text-gray-400 mt-1">예상: {fmtMoney(totalExpected)}</div>
+            <div className="text-xs text-red-500 mt-1">미체크인: {totalUnpaid}건</div>
           </div>
         </div>
 
@@ -99,7 +105,11 @@ export default function Stats() {
                   </td>
                   <td className="px-4 py-3 text-center text-blue-600">{r.reservation_count}</td>
                   <td className="px-4 py-3 text-center text-orange-500">{r.total_people}</td>
-                  <td className="px-4 py-3 text-right text-green-700">{fmtMoney(r.total_revenue)}</td>
+                  <td className="px-4 py-3 text-right text-green-700">
+                    {fmtMoney(r.checkin_revenue)}
+                    <div className="text-xs text-gray-400">예상 {fmtMoney(r.expected_revenue)}</div>
+                    <div className="text-xs text-red-500">미체크인 {r.unpaid_reservations}건</div>
+                  </td>
                 </tr>
               ))}
             </tbody>

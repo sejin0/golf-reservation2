@@ -51,6 +51,11 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: '필수 항목 누락 (slot_id, name, phone)' });
   }
 
+  const normalizedPhone = String(phone).replace(/\D/g, '');
+  if (normalizedPhone.length < 8) {
+    return res.status(400).json({ error: '전화번호를 정확히 입력하세요' });
+  }
+
   const pc = Number(people_count) || 4;
   if (pc < 2) return res.status(400).json({ error: '팀예약은 최소 2명부터 가능합니다' });
 
@@ -63,7 +68,7 @@ router.post('/', async (req, res) => {
       ON CONFLICT (phone) 
       DO UPDATE SET name = EXCLUDED.name
       RETURNING id
-    `, [name, phone]);
+    `, [name, normalizedPhone]);
     
     const customer_id = custRes.rows[0].id;
 
@@ -140,10 +145,10 @@ router.patch('/:id/cancel', async (req, res) => {
    GET /api/reservations (조회 로직 - main / join 구분)
 ═══════════════════════════════════════════════════════════ */
 router.get('/', async (req, res) => {
-  const { date, phone } = req.query;
+  const { date, phone, name } = req.query;
   try {
-    if (!date && !phone) {
-      return res.status(400).json({ error: 'date 또는 phone 필요' });
+    if (!date && !phone && !name) {
+      return res.status(400).json({ error: 'date 또는 phone 또는 name 필요' });
     }
 
     let mainQuery = `
@@ -165,8 +170,9 @@ router.get('/', async (req, res) => {
     }
 
     if (phone) {
-      mainParams.push(phone);
-      conditions.push(`c.phone = $${mainParams.length}`);
+      const normalizedPhone = String(phone).replace(/\D/g, '');
+      mainParams.push(normalizedPhone);
+      conditions.push(`REPLACE(c.phone, '-', '') = $${mainParams.length}`);
 
       joinQuery = `
         SELECT jr.*, ts.slot_date, ts.slot_time, COALESCE(ts.course, 'A') AS course,
@@ -174,10 +180,27 @@ router.get('/', async (req, res) => {
         FROM join_reservations jr
         JOIN tee_slots ts ON ts.id = jr.slot_id
         JOIN customers c ON c.id = jr.customer_id
-        WHERE jr.status = 'confirmed' AND c.phone = $1
+        WHERE jr.status = 'confirmed' AND REPLACE(c.phone, '-', '') = $1
         ORDER BY ts.slot_date DESC, ts.slot_time DESC
       `;
-      joinParams = [phone];
+      joinParams = [normalizedPhone];
+    }
+
+    if (name) {
+      const term = `%${name}%`;
+      mainParams.push(term);
+      conditions.push(`c.name ILIKE $${mainParams.length}`);
+
+      joinQuery = `
+        SELECT jr.*, ts.slot_date, ts.slot_time, COALESCE(ts.course, 'A') AS course,
+               c.name, c.phone, 'join' AS booking_type
+        FROM join_reservations jr
+        JOIN tee_slots ts ON ts.id = jr.slot_id
+        JOIN customers c ON c.id = jr.customer_id
+        WHERE jr.status = 'confirmed' AND c.name ILIKE $1
+        ORDER BY ts.slot_date DESC, ts.slot_time DESC
+      `;
+      joinParams = [term];
     }
 
     if (conditions.length > 0) {

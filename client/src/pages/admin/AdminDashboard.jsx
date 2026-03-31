@@ -112,15 +112,18 @@ export default function AdminDashboard() {
             </div>
             {/* 매출 */}
             <div className="bg-white rounded-xl shadow p-4">
-              <p className="text-xs text-gray-400 mb-1">예상 그린피 매출</p>
+              <p className="text-xs text-gray-400 mb-1">체크인 기반 매출</p>
               <div className="flex items-end gap-2">
                 <span className="text-3xl font-bold text-green-700">
-                  {stats?.total_revenue ? Math.round(stats.total_revenue / 10000) : 0}
+                  {stats?.checkin_revenue ? Math.round(stats.checkin_revenue / 10000) : 0}
                 </span>
                 <span className="text-sm text-gray-400 pb-0.5">만원</span>
               </div>
               <div className="mt-2 text-xs text-gray-400">
-                예약 {stats?.reservation_count ?? mainList.length + joinList.length}건
+                (예상: {stats?.expected_revenue ? Math.round(stats.expected_revenue / 10000) : 0}만원)
+              </div>
+              <div className="mt-2 text-xs text-gray-400">
+                예약 {stats?.reservation_count ?? mainList.length + joinList.length}건, 체크인 {stats?.checkin_count ?? 0}건
               </div>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import dayjs from 'dayjs';
 
@@ -9,6 +10,7 @@ export default function ReservationMgmt() {
   const [date, setDate]           = useState(dayjs().format('YYYY-MM-DD'));
   const [slots, setSlots]         = useState([]);
   const [mainList, setMainList]   = useState([]);   // 주예약 목록
+  const navigate = useNavigate();
   const [joinList, setJoinList]   = useState([]);   // 조인예약 목록
   const [loading, setLoading]     = useState(false);
   const [selectedSlot, setSelectedSlot] = useState(null);
@@ -195,6 +197,10 @@ export default function ReservationMgmt() {
           date={selectedSlot.date}
           onClose={() => setSelectedSlot(null)}
           onRefresh={() => { setSelectedSlot(null); loadData(date); }}
+          onCheckIn={() => {
+            setSelectedSlot(null);
+            navigate(`/admin/checkin?date=${date}`);
+          }}
         />
       )}
     </div>
@@ -204,7 +210,7 @@ export default function ReservationMgmt() {
 /* ═══════════════════════════════════════════════════
    티타임 상세 모달
 ═══════════════════════════════════════════════════ */
-function SlotDetailModal({ slot, mains, joins, date, onClose, onRefresh }) {
+function SlotDetailModal({ slot, mains, joins, date, onClose, onRefresh, onCheckIn }) {
   const [feeInfo, setFeeInfo]       = useState(null);
   const [memo, setMemo]             = useState(slot.memo || '');
   const [savingMemo, setSavingMemo] = useState(false);
@@ -661,6 +667,10 @@ function SlotDetailModal({ slot, mains, joins, date, onClose, onRefresh }) {
               </button>
             </div>
 
+            <button
+              onClick={onCheckIn}
+              className="w-full mb-2 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+            >체크인 페이지로 이동</button>
             <button
               onClick={onClose}
               className="w-full py-3 rounded-xl border border-gray-300 text-gray-600 text-sm font-medium hover:bg-gray-50 transition"

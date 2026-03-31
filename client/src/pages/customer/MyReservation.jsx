@@ -3,9 +3,23 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import dayjs from 'dayjs';
 
+const formatPhone = (value) => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.startsWith('02')) {
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 5) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+    if (digits.length <= 9) return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`;
+    return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6, 10)}`;
+  }
+  if (digits.length < 4) return digits;
+  if (digits.length < 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  if (digits.length < 11) return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+};
+
 export default function MyReservation() {
   const [params]  = useSearchParams();
-  const [phone, setPhone]       = useState(params.get('phone') || '');
+  const [phone, setPhone]       = useState(formatPhone(params.get('phone') || ''));
   const [mainList, setMainList] = useState([]);
   const [joinList, setJoinList] = useState([]);
   const [searched, setSearched] = useState(false);
@@ -16,7 +30,8 @@ export default function MyReservation() {
   }, []);
 
   const handleSearch = async (p) => {
-    const q = p || phone;
+    const raw = p != null ? p : phone;
+    const q = String(raw).replace(/\D/g, '');
     if (!q.trim()) return alert('전화번호를 입력하세요');
     setLoading(true);
     try {
@@ -63,10 +78,10 @@ export default function MyReservation() {
 
       {/* 전화번호 조회 */}
       <div className="bg-white rounded-xl shadow p-4 mb-5">
-        <label className="block text-sm font-medium text-gray-600 mb-2">전화번호로 조회</label>
+        <label className="block text-sm font-medium text-gray-600 mb-2">전화번호로 조회(숫자만입력)</label>
         <div className="flex gap-2">
           <input
-            type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+            type="tel" value={phone} onChange={e => setPhone(formatPhone(e.target.value))}
             placeholder="010-1234-5678"
             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
             onKeyDown={e => e.key === 'Enter' && handleSearch()}

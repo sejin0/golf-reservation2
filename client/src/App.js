@@ -13,6 +13,7 @@ import AdminDashboard    from './pages/admin/AdminDashboard';
 import TeeTimeSetup      from './pages/admin/TeeTimeSetup';
 import ReservationMgmt   from './pages/admin/ReservationMgmt';
 import CheckIn           from './pages/admin/CheckIn';
+import MemberLookup      from './pages/admin/MemberLookup';
 import Settings          from './pages/admin/Settings';
 import Stats             from './pages/admin/Stats';
 import GreenFeeSettings  from './pages/admin/GreenFeeSettings';
@@ -40,6 +41,7 @@ function App() {
           <Route path="teetime-setup" element={<TeeTimeSetup />} />
           <Route path="reservations"  element={<ReservationMgmt />} />
           <Route path="checkin"       element={<CheckIn />} />
+          <Route path="members"       element={<MemberLookup />} />
           <Route path="settings"      element={<Settings />} />
           <Route path="stats"         element={<Stats />} />
           <Route path="greenfee"      element={<GreenFeeSettings />} />

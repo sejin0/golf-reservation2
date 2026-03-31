@@ -5,7 +5,8 @@ const nav = [
   { to: '/admin/reservations',  label: '📋 예약현황' },
   { to: '/admin/checkin',       label: '✅ 체크인' },
   { to: '/admin/teetime-setup', label: '⏰ 티타임설정' },
-  { to: '/admin/greenfee',      label: '💰 그린피설정' },   // ✅ 추가
+  { to: '/admin/greenfee',      label: '💰 그린피설정' },
+  { to: '/admin/members',       label: '👥 회원조회' },
   { to: '/admin/settings',      label: '⚙️ 기본설정' },
   { to: '/admin/stats',         label: '📈 통계' },
 ];

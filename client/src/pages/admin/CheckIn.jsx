@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api/axios';
 import dayjs from 'dayjs';
 
@@ -6,7 +7,8 @@ import dayjs from 'dayjs';
    메인 컴포넌트: 체크인
 ═══════════════════════════════════════════════════ */
 export default function CheckIn() {
-  const [date, setDate]         = useState(dayjs().format('YYYY-MM-DD'));
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [date, setDate] = useState(() => searchParams.get('date') || dayjs().format('YYYY-MM-DD'));
   const [slots, setSlots]       = useState([]);
   const [mainList, setMainList] = useState([]);
   const [joinList, setJoinList] = useState([]);
@@ -42,6 +44,13 @@ export default function CheckIn() {
 
   useEffect(() => { loadData(date); }, [date, loadData]);
 
+  useEffect(() => {
+    const qDate = searchParams.get('date');
+    if (qDate && qDate !== date) {
+      setDate(qDate);
+    }
+  }, [searchParams, date]);
+
   // 슬롯별 그룹핑
   const mainBySlot = {};
   mainList.forEach(r => {
@@ -65,7 +74,11 @@ export default function CheckIn() {
       <div className="bg-white rounded-xl shadow p-4 mb-5 flex items-center gap-3 flex-wrap">
         <input
           type="date" value={date}
-          onChange={e => setDate(e.target.value)}
+          onChange={e => {
+            const d = e.target.value;
+            setDate(d);
+            setSearchParams({ date: d });
+          }}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
         />
         <span className="text-sm text-gray-500">

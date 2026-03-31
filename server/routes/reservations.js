@@ -108,12 +108,45 @@ router.post('/', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════
-   GET /api/reservations (조회 로직 - 기존과 동일)
+   PATCH /api/reservations/:id/cancel — 주예약(팀예약) 취소
 ═══════════════════════════════════════════════════ */
+router.patch('/:id/cancel', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const resvRes = await db.query('SELECT * FROM reservations WHERE id = $1', [id]);
+    const reservation = resvRes.rows[0];
+    if (!reservation) return res.status(404).json({ error: '예약 없음' });
+
+    await db.query(
+      `UPDATE reservations SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE id=$1`,
+      [id]
+    );
+
+    await db.query(
+      `UPDATE join_reservations SET status='cancelled', updated_at=CURRENT_TIMESTAMP
+       WHERE slot_id=$1 AND status='confirmed'`,
+      [reservation.slot_id]
+    );
+
+    await syncSlotStatus(reservation.slot_id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('예약 취소 에러:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════
+   GET /api/reservations (조회 로직 - main / join 구분)
+═══════════════════════════════════════════════════════════ */
 router.get('/', async (req, res) => {
   const { date, phone } = req.query;
   try {
-    let queryStr = `
+    if (!date && !phone) {
+      return res.status(400).json({ error: 'date 또는 phone 필요' });
+    }
+
+    let mainQuery = `
       SELECT r.*, ts.slot_date, ts.slot_time, COALESCE(ts.course, 'A') AS course,
              c.name, c.phone, 'main' AS booking_type
       FROM reservations r
@@ -121,20 +154,42 @@ router.get('/', async (req, res) => {
       JOIN customers c  ON c.id  = r.customer_id
       WHERE r.status = 'confirmed'
     `;
-    
-    let params = [];
+    let mainParams = [];
+    let conditions = [];
+    let joinQuery = null;
+    let joinParams = [];
+
     if (date) {
-      queryStr += " AND ts.slot_date = $1 ORDER BY ts.slot_time, r.id";
-      params = [date];
-    } else if (phone) {
-      queryStr += " AND c.phone = $1 ORDER BY ts.slot_date DESC, ts.slot_time DESC";
-      params = [phone];
-    } else {
-      return res.status(400).json({ error: 'date 또는 phone 필요' });
+      mainParams.push(date);
+      conditions.push(`ts.slot_date = $${mainParams.length}`);
     }
 
-    const result = await db.query(queryStr, params);
-    res.json({ main: result.rows, join: [] }); // 편의상 join은 빈 배열로 응답
+    if (phone) {
+      mainParams.push(phone);
+      conditions.push(`c.phone = $${mainParams.length}`);
+
+      joinQuery = `
+        SELECT jr.*, ts.slot_date, ts.slot_time, COALESCE(ts.course, 'A') AS course,
+               c.name, c.phone, 'join' AS booking_type
+        FROM join_reservations jr
+        JOIN tee_slots ts ON ts.id = jr.slot_id
+        JOIN customers c ON c.id = jr.customer_id
+        WHERE jr.status = 'confirmed' AND c.phone = $1
+        ORDER BY ts.slot_date DESC, ts.slot_time DESC
+      `;
+      joinParams = [phone];
+    }
+
+    if (conditions.length > 0) {
+      mainQuery += ' AND ' + conditions.join(' AND ');
+    }
+
+    mainQuery += phone ? ' ORDER BY ts.slot_date DESC, ts.slot_time DESC' : ' ORDER BY ts.slot_time, r.id';
+
+    const mainResult = await db.query(mainQuery, mainParams);
+    const joinResult = joinQuery ? await db.query(joinQuery, joinParams) : { rows: [] };
+
+    res.json({ main: mainResult.rows, join: joinResult.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

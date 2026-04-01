@@ -101,45 +101,44 @@ export default function Home() {
       </div>
 
       <div className="bg-white rounded-[32px] p-5 shadow-sm">
-        <div className="flex flex-col gap-4 mb-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm text-gray-500">월 선택</p>
-              <div className="mt-2 inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-2">
-                <span className="text-sm text-gray-600">{selectedDay.year()}년</span>
-                <select
-                  value={selectedDay.month() + 1}
-                  onChange={(e) => handleMonthSelect(Number(e.target.value))}
-                  className="bg-transparent text-sm font-semibold text-gray-900 outline-none"
+<div className="flex flex-col gap-3 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-[130px]">
+                <p className="text-xs text-gray-500">월 선택</p>
+                <div className="mt-1 inline-flex items-center gap-1 rounded-2xl border border-gray-200 bg-white px-2 py-2">
+                  <span className="text-xs text-gray-600">{selectedDay.year()}년</span>
+                  <select
+                    value={selectedDay.month() + 1}
+                    onChange={(e) => handleMonthSelect(Number(e.target.value))}
+                    className="bg-transparent text-sm font-semibold text-gray-900 outline-none"
+                  >
+                    {months.map(month => (
+                      <option key={month} value={month}>{month}월</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 rounded-3xl bg-gray-100 px-2 py-2">
+                <button
+                  onClick={() => changeSelectedDate(-1)}
+                  disabled={selectedDay.isSame(today, 'day')}
+                  className="w-10 h-10 rounded-full border border-gray-200 text-gray-600 disabled:opacity-40"
                 >
-                  {months.map(month => (
-                    <option key={month} value={month}>{month}월</option>
-                  ))}
-                </select>
+                  {'<'}
+                </button>
+                <div className="whitespace-nowrap text-sm font-semibold text-gray-900">
+                  {selectedDay.format('M월 D일')} ({WEEKDAYS[selectedDay.day()]})
+                </div>
+                <button
+                  onClick={() => changeSelectedDate(1)}
+                  className="w-10 h-10 rounded-full border border-gray-200 text-gray-600"
+                >
+                  {'>'}
+                </button>
               </div>
             </div>
-
-            <div className="rounded-3xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-700">
-              {selectedDay.format('M월 D일')} ({WEEKDAYS[selectedDay.day()]})
-            </div>
           </div>
-
-          <div className="flex items-center justify-center gap-3">
-            <button
-              onClick={() => changeSelectedDate(-1)}
-              disabled={selectedDay.isSame(today, 'day')}
-              className="w-12 h-12 rounded-full border border-gray-200 text-gray-600 disabled:opacity-40"
-            >
-              {'<'}
-            </button>
-            <button
-              onClick={() => changeSelectedDate(1)}
-              className="w-12 h-12 rounded-full border border-gray-200 text-gray-600"
-            >
-              {'>'}
-            </button>
-          </div>
-        </div>
 
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
           {dates.map(day => (
@@ -147,7 +146,7 @@ export default function Home() {
               key={day.iso}
               ref={(el) => { if (el) dateRefs.current[day.iso] = el; }}
               onClick={() => !day.disabled && setSelectedDate(day.iso)}
-              className={`min-w-[72px] flex-shrink-0 rounded-3xl border p-3 text-left transition
+              className={`min-w-[60px] flex-shrink-0 rounded-3xl border p-2.5 text-center transition
                 ${day.iso === selectedDate ? 'border-green-700 bg-green-700 text-white' : 'border-gray-200 bg-white text-gray-700'}
                 ${day.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:border-green-500'}
               `}
@@ -169,7 +168,7 @@ export default function Home() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 mb-5">
+        <div className="grid grid-cols-4 gap-2 mb-5">
           {PARTS.map(part => (
             <button
               key={part.key}

@@ -15,6 +15,7 @@ export default function Home() {
   const today = dayjs();
   const [selectedDate, setSelectedDate] = useState(today.format('YYYY-MM-DD'));
   const [slots, setSlots] = useState([]);
+  const [feeInfo, setFeeInfo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [activePart, setActivePart] = useState(PARTS[0].key);
   const navigate = useNavigate();
@@ -58,10 +59,13 @@ export default function Home() {
 
   useEffect(() => {
     setLoading(true);
-    api.get(`/teetimes?date=${selectedDate}`)
-      .then(r => setSlots(Array.isArray(r.data) ? r.data : []))
-      .catch(() => alert('티타임 조회 실패'))
-      .finally(() => setLoading(false));
+    Promise.all([
+      api.get(`/teetimes?date=${selectedDate}`),
+      api.get(`/greenfee/resolve?date=${selectedDate}`),
+    ]).then(([r1, r2]) => {
+      setSlots(Array.isArray(r1.data) ? r1.data : []);
+      setFeeInfo(r2.data || null);
+    }).catch(() => alert('티타임 조회 실패')).finally(() => setLoading(false));
   }, [selectedDate]);
 
   const filteredSlots = useMemo(() => {
@@ -79,6 +83,8 @@ export default function Home() {
   const statusInfo = (slot) => {
     if (slot.status === 'closed') return { label: '마감', cls: 'bg-gray-100 text-gray-400' };
     if (slot.status === 'full') return { label: '만석', cls: 'bg-red-100 text-red-500' };
+    if (slot.slot_type === 'team') return { label: '한팀으로 예약', cls: 'bg-indigo-100 text-indigo-700' };
+    // slot_type===join or default
     return {
       label: `잔여 ${slot.remain}명`,
       cls: slot.remain <= 1 ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-700',
@@ -193,8 +199,9 @@ export default function Home() {
           <div className="space-y-3">
             {filteredSlots[activePart].map(slot => {
               const info = statusInfo(slot);
-              const canTeam = slot.can_team === 1;
-              const canJoin = slot.can_join === 1;
+              const slotType = slot.slot_type || 'join';
+              const canTeam = slotType === 'team' || (slotType === 'join' ? false : slot.can_team === 1);
+              const canJoin = slotType === 'join' || (slotType === 'team' ? false : slot.can_join === 1);
               const inactive = !canTeam && !canJoin;
 
               return (
@@ -202,15 +209,14 @@ export default function Home() {
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div>
                       <div className="text-3xl font-bold text-green-700">{slot.slot_time}</div>
-                      <div className="mt-2 text-sm text-gray-500">{slot.course ? `${slot.course}코스` : '기본 코스'}</div>
+                      <div className="mt-2 text-sm text-gray-600">홀: {slot.hole_type || 9}홀</div>
+                      <div className="mt-1 text-sm text-gray-600">실제가격 {((slot.actual_price ?? (slot.slot_type === 'team' ? slot.team_fee : slot.join_fee) ?? (slot.hole_type === 18 ? feeInfo?.fee_18 : feeInfo?.fee_9)) || 0).toLocaleString()}원</div>
+                      <div className="mt-1 text-sm text-gray-600">예약형태: {slot.slot_type === 'team' ? '팀예약' : '조인예약'}</div>
                     </div>
                     <span className={`rounded-full px-3 py-1 text-xs font-semibold ${info.cls}`}>{info.label}</span>
                   </div>
 
-                  <div className="flex flex-wrap gap-2 text-xs text-gray-500 mb-4">
-                    <span>예약 {slot.reserved_count}/{slot.max_per_slot}명</span>
-                    <span>팀 {slot.main_count} / 조인 {slot.join_count}</span>
-                  </div>
+                  {/* 예약/팀/조인 요약 라인 제거 (팀은 전체 구매, 조인은 상단 잔여 표시로 대체) */}
 
                   {!inactive ? (
                     <div className="grid grid-cols-2 gap-2">

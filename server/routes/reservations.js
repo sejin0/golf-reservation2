@@ -45,7 +45,7 @@ async function syncSlotStatus(slotId) {
 ═══════════════════════════════════════════════════ */
 router.post('/', async (req, res) => {
   // 프론트에서 이름(name)과 전화번호(phone)를 반드시 보내줘야 합니다.
-  const { slot_id, people_count, holes, memo, name, phone } = req.body;
+  const { slot_id, people_count, holes, memo, name, phone, reservation_type } = req.body;
 
   if (!slot_id || !phone || !name) {
     return res.status(400).json({ error: '필수 항목 누락 (slot_id, name, phone)' });
@@ -88,13 +88,20 @@ router.post('/', async (req, res) => {
 
     // [STEP 3] 예약 실행
     const insertRes = await db.query(`
-      INSERT INTO reservations (slot_id, customer_id, people_count, holes, memo)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO reservations (slot_id, customer_id, people_count, holes, memo, status)
+      VALUES ($1, $2, $3, $4, $5, 'confirmed')
       RETURNING id
     `, [slot_id, customer_id, pc, holes || 18, memo || '']);
 
     const newId = insertRes.rows[0].id;
-    await syncSlotStatus(slot_id);
+
+    if (reservation_type === 'team' || !reservation_type) {
+      // 팀예약은 티타임 전체 구매로 즉시 만석 처리
+      await db.query('UPDATE tee_slots SET status=$1 WHERE id=$2', ['full', slot_id]);
+    } else {
+      // 조인 주예약 또는 일반 주예약은 사람 합산으로 상태 결정
+      await syncSlotStatus(slot_id);
+    }
 
     // [STEP 4] 결과 상세 조회 반환 (이름, 전화번호 포함)
     const detailRes = await db.query(`

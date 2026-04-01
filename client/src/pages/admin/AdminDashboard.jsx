@@ -54,7 +54,7 @@ export default function AdminDashboard() {
   const totalPeople     = totalMainPeople + totalJoinPeople;
 
   const quickMenus = [
-    { to: '/admin/reservations', icon: '📋', label: '예약 현황',  color: 'bg-blue-50  text-blue-600'  },
+    { to: '/admin/reservations', icon: '📋', label: '티타임 관리',  color: 'bg-blue-50  text-blue-600'  },
     { to: '/admin/checkin',      icon: '✅', label: '체크인',     color: 'bg-green-50 text-green-600' },
     { to: '/admin/teetime-setup',icon: '⏰', label: '티타임 설정', color: 'bg-yellow-50 text-yellow-600'},
     { to: '/admin/greenfee',     icon: '💰', label: '그린피 설정', color: 'bg-purple-50 text-purple-600'},

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import dayjs from 'dayjs';
@@ -26,10 +26,20 @@ export default function ReservationForm() {
   const [name, setName]           = useState('');
   const [phone, setPhone]         = useState('');
   const [peopleCount, setPeople]  = useState(2);   // 최소 2명
-  const [holes, setHoles]         = useState(9);
+  const [slotInfo, setSlotInfo]   = useState(null);
   const [memo, setMemo]           = useState('');
   const [loading, setLoading]     = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!slotId || !date) return;
+    api.get(`/teetimes?date=${date}`)
+      .then(r => {
+        const slot = Array.isArray(r.data) ? r.data.find(s => String(s.id) === String(slotId)) : null;
+        if (slot) setSlotInfo(slot);
+      })
+      .catch(() => {});
+  }, [slotId, date]);
 
   const handleSubmit = async () => {
     if (!name.trim() || !phone.trim()) return alert('이름과 전화번호를 입력하세요');
@@ -42,17 +52,18 @@ export default function ReservationForm() {
       const { data: customer } = await api.post('/customers/lookup', { name, phone });
 
       // 2. 주예약(팀예약) 생성
+      const appliedHoles = slotInfo?.hole_type || slotInfo?.holes || 9;
       await api.post('/reservations', {
         slot_id:      Number(slotId),
         customer_id:  customer.id,
         people_count: peopleCount,
-        holes,
+        holes:        appliedHoles,
         memo,
         name:         name,
         phone:        phone,
       });
 
-      alert(`팀예약 완료!\n${date} ${time} / ${peopleCount}명 / ${holes}홀`);
+      alert(`팀예약 완료!\n${date} ${time} / ${peopleCount}명 / ${appliedHoles}홀`);
       navigate('/my?phone=' + phone);
     } catch (e) {
       alert(e.response?.data?.error || '예약 실패');
@@ -124,23 +135,11 @@ export default function ReservationForm() {
           )}
         </div>
 
-        {/* 홀 수 */}
+        {/* 홀 수 (관리자 설정값만 노출, 고객 선택 불가) */}
         <div className="bg-white rounded-xl shadow p-4">
           <label className="block text-sm font-medium text-gray-600 mb-2">홀 수</label>
-          <div className="flex gap-3">
-            {[9, 18].map(h => (
-              <button
-                key={h}
-                onClick={() => setHoles(h)}
-                className={`flex-1 py-3 rounded-lg font-semibold transition
-                  ${holes === h
-                    ? 'bg-green-700 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-              >
-                {h}홀
-              </button>
-            ))}
-          </div>
+          <div className="text-lg font-bold text-gray-700">{slotInfo?.hole_type || slotInfo?.holes || 9}홀</div>
+          <div className="text-xs text-gray-500 mt-1">(관리자가 설정한 홀 수 기준)</div>
         </div>
 
         {/* 메모 */}

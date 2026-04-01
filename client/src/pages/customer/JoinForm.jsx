@@ -8,7 +8,7 @@ export default function JoinForm() {
   const slotId    = params.get('slotId');
   const date      = params.get('date');
   const time      = params.get('time');
-  const remain    = Number(params.get('remain') || 2);  // 잔여 인원
+  const urlRemain = Number(params.get('remain') || 0);  // 전달된 잔여 인원 (기본 0)
 
   const [name, setName]         = useState('');
   const [phone, setPhone]       = useState('');
@@ -27,11 +27,14 @@ export default function JoinForm() {
     if (!slotId || !date) return;
     api.get(`/reservations?date=${date}`)
       .then(r => {
-        // 해당 슬롯의 주예약(main) 중 첫 번째 confirmed
         const mainList = r.data?.main || [];
         const main = mainList.find(m => String(m.slot_id) === String(slotId));
-        if (main) setMainRsvId(main.id);
-        else alert('해당 슬롯에 주예약이 없습니다. 팀예약을 먼저 해주세요.');
+        if (main) {
+          setMainRsvId(main.id);
+        } else {
+          // 주예약이 없는 최초 조인 예약 가능
+          setMainRsvId(null);
+        }
       })
       .catch(() => alert('슬롯 정보 조회 실패'))
       .finally(() => setLoadingSlot(false));
@@ -44,30 +47,48 @@ export default function JoinForm() {
       });
   }, [slotId, date]);
 
-  // 잔여 인원에 따라 선택 가능 인원 계산 (1 ~ min(remain, 2))
-  const maxJoin = Math.min(remain, 2);
+  // 잔여 인원에 따라 선택 가능 인원 계산 (1 ~ 최대 4)
+  let effectiveRemain = slotInfo?.remain ?? urlRemain;
+  if (effectiveRemain <= 0) effectiveRemain = 4;
+  const maxJoin = Math.min(Math.max(effectiveRemain, 1), 4);
 
   const handleSubmit = async () => {
     if (!name.trim() || !phone.trim()) return alert('이름과 전화번호를 입력하세요');
     if (phone.replace(/-/g, '').length < 10) return alert('전화번호를 정확히 입력하세요');
-    if (!mainRsvId) return alert('주예약 정보를 찾을 수 없습니다');
-    if (peopleCount > maxJoin) return alert(`잔여 자리(${remain}명) 초과입니다`);
+    if (peopleCount > maxJoin) return alert(`잔여 자리(${effectiveRemain}명) 초과입니다`);
 
     setLoading(true);
     try {
       // 1. 고객 조회/등록
       const { data: customer } = await api.post('/customers/lookup', { name, phone });
 
-      // 2. 조인예약 생성
-      await api.post('/join', {
-        reservation_id: mainRsvId,
-        customer_id:    customer.id,
-        people_count:   peopleCount,
-        holes,
-        memo,
-      });
+      let reservationId = mainRsvId;
 
-      alert(`조인예약 완료!\n${date} ${time} / ${peopleCount}명 / ${holes}홀`);
+      if (!reservationId) {
+        // 최초 예약자: 주예약(조인 시작)으로 등록
+        const resv = await api.post('/reservations', {
+          slot_id:          Number(slotId),
+          people_count:     peopleCount,
+          holes:            slotInfo?.hole_type || slotInfo?.holes || 9,
+          memo,
+          name,
+          phone,
+          reservation_type: 'join',
+        });
+        reservationId = resv.data.id;
+        alert(`주예약으로 등록되었습니다.\n${date} ${time} / ${peopleCount}명 / ${(slotInfo?.hole_type || slotInfo?.holes || 9)}홀`);
+      } else {
+        // 기존 주예약이 있을 때 조인 예약
+        await api.post('/join', {
+          reservation_id: reservationId,
+          customer_id:    customer.id,
+          people_count:   peopleCount,
+          holes:          slotInfo?.hole_type || slotInfo?.holes || 9,
+          memo,
+        });
+        alert(`조인예약 완료!\n${date} ${time} / ${peopleCount}명 / ${(slotInfo?.hole_type || slotInfo?.holes || 9)}홀`);
+      }
+
       navigate('/my?phone=' + phone);
     } catch (e) {
       alert(e.response?.data?.error || '조인예약 실패');
@@ -111,8 +132,7 @@ export default function JoinForm() {
 
       {/* 조인 안내 */}
       <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-5 text-xs text-yellow-700">
-        💡 조인예약은 기존 팀에 합류하는 방식입니다.
-        최대 {maxJoin}명까지 신청 가능합니다.
+        💡 주예약이 없으면 최초 신청자는 주예약(팀예약)으로 자동 전환됩니다. 이미 주예약이 있는 경우 조인예약으로 합류됩니다.
       </div>
 
       <div className="flex flex-col gap-4">
@@ -159,25 +179,6 @@ export default function JoinForm() {
           </div>
         </div>
 
-        {/* 홀 수 */}
-        <div className="bg-white rounded-xl shadow p-4">
-          <label className="block text-sm font-medium text-gray-600 mb-2">홀 수</label>
-          <div className="flex gap-3">
-            {[9, 18].map(h => (
-              <button
-                key={h}
-                onClick={() => setHoles(h)}
-                className={`flex-1 py-3 rounded-lg font-semibold transition
-                  ${holes === h
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-              >
-                {h}홀
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* 메모 */}
         <div className="bg-white rounded-xl shadow p-4">
           <label className="block text-sm font-medium text-gray-600 mb-2">
@@ -193,7 +194,7 @@ export default function JoinForm() {
         {/* 예약 버튼 */}
         <button
           onClick={handleSubmit}
-          disabled={loading || !mainRsvId}
+          disabled={loading}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white text-lg font-semibold py-4 rounded-2xl shadow transition mt-2"
         >
           {loading ? '처리 중...' : '🤝 조인 확정'}

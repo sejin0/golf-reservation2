@@ -58,8 +58,8 @@ router.post('/', async (req, res) => {
 
     // 3. 조인 예약 등록 (RETURNING 사용)
     const insertRes = await db.query(`
-      INSERT INTO join_reservations (slot_id, customer_id, people_count, memo)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO join_reservations (slot_id, customer_id, people_count, memo, status)
+      VALUES ($1, $2, $3, $4, 'confirmed')
       RETURNING id
     `, [slot_id, customer_id, pc, memo || '']);
 

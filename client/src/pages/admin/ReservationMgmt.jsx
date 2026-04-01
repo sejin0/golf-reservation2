@@ -10,6 +10,10 @@ export default function ReservationMgmt() {
   const [date, setDate]           = useState(dayjs().format('YYYY-MM-DD'));
   const [slots, setSlots]         = useState([]);
   const [mainList, setMainList]   = useState([]);   // 주예약 목록
+  const [feeInfo, setFeeInfo]     = useState(null);
+  const [slotHoles, setSlotHoles] = useState({});
+  const [linkInput, setLinkInput] = useState({});
+
   const navigate = useNavigate();
   const [joinList, setJoinList]   = useState([]);   // 조인예약 목록
   const [loading, setLoading]     = useState(false);
@@ -18,19 +22,64 @@ export default function ReservationMgmt() {
   const loadData = useCallback(async (d) => {
     setLoading(true);
     try {
-      const [slotsRes, rsvRes] = await Promise.all([
+      const [slotsRes, rsvRes, feeRes] = await Promise.all([
         api.get(`/teetimes?date=${d}`),
         api.get(`/reservations?date=${d}`),
+        api.get(`/greenfee/resolve?date=${d}`),
       ]);
-      setSlots(Array.isArray(slotsRes.data) ? slotsRes.data : []);
+
+      const slotsData = Array.isArray(slotsRes.data) ? slotsRes.data : [];
+      setSlots(slotsData);
       setMainList(Array.isArray(rsvRes.data?.main) ? rsvRes.data.main : []);
       setJoinList(Array.isArray(rsvRes.data?.join) ? rsvRes.data.join : []);
-    } catch {
+      setFeeInfo(feeRes.data || null);
+
+      const holesMap = {};
+      slotsData.forEach(slot => {
+        holesMap[slot.id] = slot.hole_type || slot.holes || 9;
+      });
+      setSlotHoles(holesMap);
+    } catch (err) {
+      console.error(err);
       alert('조회 실패');
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const handleLinkChange = async (slot, value) => {
+    if (!value || value === '--:--') {
+      // unlink the slot and restore hole type 9
+      await api.patch(`/teetimes/${slot.id}`, { linked_slot_id: null, hole_type: 9 });
+      // unlink any slot pointing to this
+      if (slot.linked_slot_id) {
+        await api.patch(`/teetimes/${slot.linked_slot_id}`, { linked_from_slot_id: null, status: 'open', hole_type: 9 });
+      }
+      await loadData(date);
+      return;
+    }
+
+    const targetSlot = slots.find(s => (s.slot_time || '').slice(0,5) === value);
+    if (!targetSlot || targetSlot.id === slot.id) {
+      alert('유효한 후행 티타임을 선택하세요');
+      return;
+    }
+
+    // source update
+    await api.patch(`/teetimes/${slot.id}`, {
+      linked_slot_id: targetSlot.id,
+      hole_type: 18,
+    });
+
+    // target update
+    await api.patch(`/teetimes/${targetSlot.id}`, {
+      linked_from_slot_id: slot.id,
+      status: 'full',
+      hole_type: 18,
+    });
+
+    await loadData(date);
+  };
 
   useEffect(() => { loadData(date); }, [date, loadData]);
 
@@ -53,33 +102,36 @@ export default function ReservationMgmt() {
   const totalPeople     = totalMainPeople + totalJoinPeople;
 
   /* ── 슬롯 UI 헬퍼 ── */
-  const slotHeaderBg = (slot) => {
-    if (slot.status === 'closed') return 'bg-gray-100';
-    if (slot.status === 'full')   return 'bg-red-50';
-    return 'bg-green-50';
-  };
-
-  const slotBadge = (slot) => {
-    if (slot.status === 'closed')              return { label: '마감',    cls: 'bg-gray-200 text-gray-500' };
-    if (slot.status === 'full')                return { label: '만석',    cls: 'bg-red-100  text-red-600'  };
-    if ((slot.reserved_count || 0) > 0)        return { label: '예약있음', cls: 'bg-blue-100 text-blue-600' };
-    return                                            { label: '빈자리',  cls: 'bg-green-100 text-green-600' };
-  };
 
   return (
     <div className="max-w-2xl">
-      <h1 className="text-2xl font-bold text-gray-800 mb-6">📋 예약 현황</h1>
+      <h1 className="text-2xl font-bold text-gray-800 mb-6">📋 티타임 관리</h1>
 
       {/* 날짜 선택 */}
       <div className="bg-white rounded-xl shadow p-4 mb-5 flex items-center gap-3 flex-wrap">
+        <button
+          onClick={() => setDate(dayjs(date).subtract(1, 'day').format('YYYY-MM-DD'))}
+          className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 hover:bg-gray-100"
+        >
+          &lt;
+        </button>
+
         <input
           type="date" value={date}
           onChange={e => setDate(e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
         />
-        <span className="text-sm text-gray-500">
+
+        <span className="text-sm font-medium text-gray-700">
           {dayjs(date).format('YYYY년 MM월 DD일 (ddd)')}
         </span>
+
+        <button
+          onClick={() => setDate(dayjs(date).add(1, 'day').format('YYYY-MM-DD'))}
+          className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-300 hover:bg-gray-100"
+        >
+          &gt;
+        </button>
       </div>
 
       {/* 요약 카드 */}
@@ -109,82 +161,127 @@ export default function ReservationMgmt() {
           <div className="text-4xl mb-2">📭</div><p>슬롯이 없습니다</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {slots.map(slot => {
-            const mains  = mainBySlot[slot.id] || [];
-            const joins  = joinBySlot[slot.id] || [];
-            const badge  = slotBadge(slot);
-            const hasAny = mains.length > 0 || joins.length > 0;
+        <div className="overflow-x-auto bg-white rounded-xl shadow">
+          <table className="min-w-[1000px] text-sm border-collapse">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium text-gray-600 border-b whitespace-nowrap">번호</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600 border-b whitespace-nowrap">시간</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600 border-b whitespace-nowrap">홀</th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600 border-b whitespace-nowrap">연계시간</th>
+                <th className="px-3 py-2 text-center font-medium text-gray-600 border-b whitespace-nowrap">예약형태</th>
+                <th className="px-3 py-2 text-right font-medium text-gray-600 border-b whitespace-nowrap">그린피 원가격</th>
+                <th className="px-3 py-2 text-right font-medium text-gray-600 border-b whitespace-nowrap">그린피 실제가격</th>
+              </tr>
+            </thead>
+            <tbody>
+              {slots
+                .slice()
+                .sort((a, b) => a.slot_time.localeCompare(b.slot_time))
+                .map((slot, index) => {
+                  const mains = mainBySlot[slot.id] || [];
+                  const joins = joinBySlot[slot.id] || [];
+                  const holeType = slotHoles[slot.id] || slot.hole_type || 9;
+                  const linkedTime = slot.linked_slot_id
+                    ? (slots.find(s => s.id === slot.linked_slot_id)?.slot_time?.slice(0,5) || '--:--')
+                    : '--:--';
+                  const linkedTarget = slot.linked_slot_id;
+                  const linkedFrom  = slot.linked_from_slot_id;
+                  const isLinkedSource = !!linkedTarget;
+                  const isLinkedTarget = !!linkedFrom;
+                  const displayTime = slot.slot_time?.slice(0,5) || slot.slot_time;
+                  const basePrice = holeType === 18 ? feeInfo?.fee_18 : feeInfo?.fee_9;
+                  const actualPrice = [...mains, ...joins].reduce((sum, r) => {
+                    const price = (r.holes === 18 ? feeInfo?.fee_18 : feeInfo?.fee_9) || 0;
+                    return sum + price * r.people_count;
+                  }, 0);
 
-            return (
-              <div
-                key={slot.id}
-                className="bg-white rounded-xl shadow overflow-hidden cursor-pointer
-                           hover:shadow-md hover:ring-2 hover:ring-green-400 transition"
-                onClick={() => setSelectedSlot({ slot, mains, joins, date })}
-              >
-                {/* 슬롯 헤더 */}
-                <div className={`px-4 py-3 flex items-center justify-between ${slotHeaderBg(slot)}`}>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-lg text-gray-800">{slot.slot_time}</span>
-                    <span className="text-sm text-gray-500">
-                      {slot.reserved_count || 0}/{slot.max_per_slot}명
-                    </span>
-                    {joins.length > 0 && (
-                      <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-medium">
-                        조인 {joins.length}팀
-                      </span>
-                    )}
-                    {slot.memo && (
-                      <span className="text-xs text-gray-400 truncate max-w-[140px]" title={slot.memo}>
-                        📝 {slot.memo}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${badge.cls}`}>
-                      {badge.label}
-                    </span>
-                    <span className="text-gray-300 text-sm">›</span>
-                  </div>
-                </div>
-
-                {/* 예약자 요약 행 */}
-                {hasAny ? (
-                  <div className="divide-y divide-gray-100">
-                    {/* 주예약 */}
-                    {mains.map(r => (
-                      <div key={`m-${r.id}`} className="px-4 py-2.5 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">팀</span>
-                          <span className="font-medium text-gray-800 text-sm">{r.name}</span>
-                          <span className="text-xs text-gray-400">{r.phone}</span>
-                        </div>
-                        <span className="text-xs text-gray-500">{r.people_count}명 · {r.holes}홀</span>
-                      </div>
-                    ))}
-                    {/* 조인예약 */}
-                    {joins.map((r, idx) => (
-                      <div key={`j-${r.id}`} className="px-4 py-2.5 flex items-center justify-between bg-blue-50/40">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">
-                            조인{idx + 1}
-                          </span>
-                          <span className="font-medium text-gray-800 text-sm">{r.name}</span>
-                          <span className="text-xs text-gray-400">{r.phone}</span>
-                        </div>
-                        <span className="text-xs text-gray-500">{r.people_count}명 · {r.holes}홀</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  slot.status !== 'closed' && (
-                    <div className="px-4 py-2.5 text-sm text-gray-400">예약 없음</div>
-                  )
-                )}
-              </div>
-            );
-          })}
+                  return (
+                    <tr key={slot.id} className={`border-b last:border-b-0 ${isLinkedSource ? 'bg-gray-200' : isLinkedTarget ? 'bg-gray-100' : 'hover:bg-gray-50'}`}>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => setSelectedSlot({ slot, mains, joins, date })}
+                          className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200"
+                        >
+                          {index + 1}
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 text-gray-700">{displayTime}</td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={holeType}
+                          onChange={async e => {
+                            const value = Number(e.target.value);
+                            try {
+                              await api.patch(`/teetimes/${slot.id}`, { hole_type: value });
+                              setSlotHoles(prev => ({ ...prev, [slot.id]: value }));
+                              await loadData(date);
+                            } catch {
+                              alert('홀 변경 실패');
+                            }
+                          }}
+                          className="w-20 border border-gray-300 rounded px-2 py-1 text-sm"
+                        >
+                          <option value={9}>9홀</option>
+                          <option value={18}>18홀</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]{2}:[0-9]{2}|--:--"
+                          value={linkInput[slot.id] ?? linkedTime}
+                          placeholder="--:--"
+                          onChange={e => {
+                            const value = e.target.value;
+                            setLinkInput(prev => ({ ...prev, [slot.id]: value }));
+                          }}
+                          onBlur={e => {
+                            const value = e.target.value.trim() || '--:--';
+                            handleLinkChange(slot, value);
+                            setLinkInput(prev => ({ ...prev, [slot.id]: value }));
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              const value = e.target.value.trim() || '--:--';
+                              handleLinkChange(slot, value);
+                              setLinkInput(prev => ({ ...prev, [slot.id]: value }));
+                            }
+                          }}
+                          className="w-24 border border-gray-300 rounded px-2 py-1 text-sm"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <select
+                          value={slot.slot_type || 'join'}
+                          onChange={async e => {
+                            const nextType = e.target.value;
+                            try {
+                              await api.patch(`/teetimes/${slot.id}`, { slot_type: nextType });
+                              await loadData(date);
+                            } catch (err) {
+                              console.error(err);
+                              alert('예약형태 저장 실패');
+                            }
+                          }}
+                          className="text-xs px-2 py-1 border border-gray-300 rounded"
+                        >
+                          <option value="join">조인예약</option>
+                          <option value="team">팀예약</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-700 whitespace-nowrap">
+                        {basePrice ? `${basePrice.toLocaleString()}원` : '-'}
+                      </td>
+                      <td className="px-3 py-2 text-right text-gray-800 font-semibold whitespace-nowrap">
+                        {actualPrice.toLocaleString()}원
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
         </div>
       )}
 

@@ -31,10 +31,10 @@ router.get('/', async (req, res) => {
     // PostgreSQL 문법: IN ($1, $2, ...) 사용
     const mainRes = await db.query(`
       SELECT slot_id, 
-             SUM(people_count)::int AS main_count, 
+             COALESCE(SUM(people_count), 0)::int AS main_count, 
              COUNT(*)::int AS main_team_count
       FROM reservations
-      WHERE slot_id = ANY($1) AND status = 'confirmed'
+      WHERE slot_id = ANY($1) AND status != 'cancelled'
       GROUP BY slot_id
     `, [slotIds]); // ANY($1) 방식이 배열 처리에 효율적입니다.
 
@@ -73,7 +73,8 @@ router.get('/', async (req, res) => {
       const remain        = maxPerSlot - reserved;
 
       const canTeam = slot.status === 'open' && remain >= minPerTeam;
-      const canJoin = slot.status === 'open' && mainTeamCount >= 1 && remain >= 1 && joinTeamCount < 2;
+      // 조인예약은 1명 이상 남았으면 누구든 예약 가능
+      const canJoin = slot.status === 'open' && remain >= 1;
 
       return {
         ...slot,
@@ -85,6 +86,10 @@ router.get('/', async (req, res) => {
         remain,
         can_team: canTeam ? 1 : 0,
         can_join: canJoin ? 1 : 0,
+        hole_type: slot.hole_type || 9,
+        slot_type: slot.slot_type || 'join',
+        linked_slot_id: slot.linked_slot_id || null,
+        linked_from_slot_id: slot.linked_from_slot_id || null,
       };
     });
 
@@ -142,17 +147,57 @@ router.post('/generate', async (req, res) => {
 
 // PATCH /api/teetimes/:id
 router.patch('/:id', async (req, res) => {
-  const { status, memo } = req.body;
+  const { status, memo, hole_type, linked_slot_id, slot_type } = req.body;
   const { id } = req.params;
 
   try {
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
     if (status !== undefined) {
-      await db.query('UPDATE tee_slots SET status=$1 WHERE id=$2', [status, id]);
-    } else if (memo !== undefined) {
-      await db.query('UPDATE tee_slots SET memo=$1 WHERE id=$2', [memo, id]);
-    } else {
-      return res.status(400).json({ error: 'status 또는 memo 필요' });
+      updates.push(`status=$${idx++}`);
+      values.push(status);
     }
+    if (memo !== undefined) {
+      updates.push(`memo=$${idx++}`);
+      values.push(memo);
+    }
+    if (hole_type !== undefined) {
+      updates.push(`hole_type=$${idx++}`);
+      values.push(hole_type);
+    }
+    if (slot_type !== undefined) {
+      updates.push(`slot_type=$${idx++}`);
+      values.push(slot_type);
+    }
+    if (linked_slot_id !== undefined) {
+      updates.push(`linked_slot_id=$${idx++}`);
+      values.push(linked_slot_id);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'status, memo, hole_type, slot_type 또는 linked_slot_id 필요' });
+    }
+
+    const queryText = `UPDATE tee_slots SET ${updates.join(', ')} WHERE id=$${idx}`;
+    values.push(id);
+
+    await db.query(queryText, values);
+
+    // linked_slot_id가 들어오면 연결 상태 반영
+    if (linked_slot_id !== undefined) {
+      if (linked_slot_id) {
+        // source: this slot, target: linked_slot_id
+        await db.query('UPDATE tee_slots SET hole_type=18, linked_from_slot_id=$1, status=$2 WHERE id=$3', [id, 'full', linked_slot_id]);
+        await db.query('UPDATE tee_slots SET hole_type=18 WHERE id=$1', [id]);
+      } else {
+        // unlink source and any target previously linked from it
+        await db.query('UPDATE tee_slots SET linked_from_slot_id=NULL, status=$1 WHERE linked_from_slot_id=$2', ['open', id]);
+        await db.query('UPDATE tee_slots SET linked_slot_id=NULL, hole_type=9 WHERE id=$1', [id]);
+      }
+    }
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
